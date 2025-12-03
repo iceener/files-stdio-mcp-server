@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.2",
+  "name": "files-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for sandboxed file access. Provides read and write operations with checksum-based safety, pattern matching, line targeting, and preset searches for Obsidian/Markdown content.",
+  "author": {
+    "name": "overment"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {
+        "FS_ROOT": "${user_config.FS_ROOT}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "fs_read",
+      "description": "Explore directories, read files, find files by name, or search content. Returns line numbers and checksums needed for editing. Supports preset patterns for Obsidian/Markdown (wikilinks, tags, tasks, headings, codeblocks, frontmatter)."
+    },
+    {
+      "name": "fs_write",
+      "description": "Create, modify, or delete files in the sandboxed filesystem. IMPORTANT: Always call fs_read first to get the checksum. Supports line-based and pattern-based targeting with dryRun preview."
+    }
+  ],
+  "user_config": {
+    "FS_ROOT": {
+      "type": "directory",
+      "title": "Root Directory",
+      "description": "The directory that the agent will have access to. All file operations are sandboxed within this directory.",
+      "required": true,
+      "sensitive": false
+    }
+  },
+  "license": "MIT"
+}
