@@ -195,7 +195,7 @@ Explore directories, read files, find files by name, or search content.
   details?: boolean;               // Include size/modified (default false)
   lines?: string;                  // "10-50" for partial read
   context?: number;                // Lines around matches (default 3)
-  maxFiles?: number;               // Limit results (default 50)
+  maxFiles?: number;               // Max files with matches to return (default: no limit)
   maxMatches?: number;             // Limit matches (default 100)
 }
 ```

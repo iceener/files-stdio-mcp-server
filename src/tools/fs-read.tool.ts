@@ -45,8 +45,10 @@ export const fsReadInputSchema = z
       .string()
       .optional()
       .describe(
-        'Search pattern to find within file(s). When provided with a file path, returns matching ' +
-          'lines with context. When provided with a directory path, searches recursively. ' +
+        'Search pattern to find within file(s). Matches both file contents AND filenames. ' +
+          'When provided with a file path, returns matching lines with context. ' +
+          'When provided with a directory path, searches recursively. ' +
+          'Files whose names contain the pattern are included even without content matches. ' +
           'Treated as literal text by default — set patternMode="regex" for regular expressions. ' +
           'For common patterns, use "preset" instead.',
       ),
@@ -110,9 +112,9 @@ export const fsReadInputSchema = z
       .min(1)
       .max(20)
       .optional()
-      .default(3)
+      .default(7)
       .describe(
-        'How many directory levels deep to traverse. Default 3. ' +
+        'How many directory levels deep to traverse. Default 7. ' +
           'Applies to directory listing, search, and find operations.',
       ),
 
@@ -176,10 +178,9 @@ export const fsReadInputSchema = z
       .number()
       .int()
       .min(1)
-      .max(500)
       .optional()
-      .default(50)
-      .describe('Maximum files to search/list. Default 50.'),
+      .default(999999)
+      .describe('Maximum files with matches to return. Searches all files but caps results. No limit by default.'),
 
     details: z
       .boolean()
@@ -776,7 +777,9 @@ async function searchDirectory(
     if (currentDepth > options.depth) {
       return;
     }
-    if (filesSearched >= options.maxFiles || allMatches.length >= options.maxMatches) {
+    
+    const filesMatched = Object.keys(fileCounts).length;
+    if (filesMatched >= options.maxFiles || allMatches.length >= options.maxMatches) {
       truncated = true;
       return;
     }
@@ -789,7 +792,8 @@ async function searchDirectory(
     }
 
     for (const item of items) {
-      if (filesSearched >= options.maxFiles || allMatches.length >= options.maxMatches) {
+      const filesMatchedInLoop = Object.keys(fileCounts).length;
+      if (filesMatchedInLoop >= options.maxFiles || allMatches.length >= options.maxMatches) {
         truncated = true;
         break;
       }
@@ -811,6 +815,11 @@ async function searchDirectory(
           }
 
           filesSearched++;
+          
+          // Check if filename matches the pattern (case-insensitive, skip for presets)
+          const filenameMatches = !options.isPreset && 
+            item.toLowerCase().includes(patternOrPreset.toLowerCase());
+          
           const content = await fs.readFile(itemPath, 'utf8');
           const fileMatches = await searchInFile(itemPath, itemRelPath, content, patternOrPreset, {
             patternMode: options.patternMode,
@@ -824,6 +833,18 @@ async function searchDirectory(
           if (fileMatches.length > 0) {
             fileCounts[itemRelPath] = fileMatches.length;
             allMatches.push(...fileMatches);
+          } else if (filenameMatches) {
+            // Filename matches but no content matches — add a filename-only result
+            fileCounts[itemRelPath] = 1;
+            allMatches.push({
+              file: itemRelPath,
+              line: 0,
+              endLine: 0,
+              matchCount: 1,
+              matchLines: [],
+              text: `Filename contains "${patternOrPreset}"`,
+              context: { before: [], match: [], after: [] },
+            });
           }
         }
       } catch {
