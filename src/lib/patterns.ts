@@ -2,7 +2,7 @@
  * Pattern matching utilities with multiple modes.
  */
 
-export type PatternMode = 'literal' | 'regex' | 'fuzzy' | 'smart';
+export type PatternMode = 'literal' | 'regex' | 'fuzzy';
 
 /**
  * Preset patterns for common Obsidian/Markdown patterns.
@@ -111,13 +111,17 @@ function normalizeWhitespace(str: string): string {
 export function buildPattern(
   pattern: string,
   mode: PatternMode,
-  options: { multiline?: boolean; wholeWord?: boolean } = {},
+  options: { multiline?: boolean; wholeWord?: boolean; caseInsensitive?: boolean } = {},
 ): RegExp {
   let source: string;
   let flags = 'g';
 
   if (options.multiline) {
     flags += 's'; // dotall mode
+  }
+
+  if (options.caseInsensitive) {
+    flags += 'i';
   }
 
   switch (mode) {
@@ -133,15 +137,6 @@ export function buildPattern(
       // Normalize pattern and create flexible whitespace matching
       const normalized = normalizeWhitespace(pattern);
       source = escapeRegex(normalized).replace(/ /g, '\\s+').replace(/\n/g, '\\s*\\n\\s*');
-      break;
-    }
-
-    case 'smart': {
-      // Case-insensitive unless pattern has uppercase
-      source = escapeRegex(pattern);
-      if (pattern === pattern.toLowerCase()) {
-        flags += 'i';
-      }
       break;
     }
   }
@@ -160,7 +155,7 @@ export function findMatches(
   content: string,
   pattern: string,
   mode: PatternMode,
-  options: { multiline?: boolean; wholeWord?: boolean; maxMatches?: number } = {},
+  options: { multiline?: boolean; wholeWord?: boolean; caseInsensitive?: boolean; maxMatches?: number } = {},
 ): MatchResult[] {
   const regex = buildPattern(pattern, mode, options);
   const matches: MatchResult[] = [];
@@ -197,7 +192,7 @@ export function findUniqueMatch(
   content: string,
   pattern: string,
   mode: PatternMode,
-  options: { multiline?: boolean; wholeWord?: boolean } = {},
+  options: { multiline?: boolean; wholeWord?: boolean; caseInsensitive?: boolean } = {},
 ):
   | { match: MatchResult }
   | { error: 'not_found' }
@@ -286,7 +281,7 @@ export function replaceAllMatches(
   pattern: string,
   replacement: string,
   mode: PatternMode,
-  options: { multiline?: boolean; wholeWord?: boolean } = {},
+  options: { multiline?: boolean; wholeWord?: boolean; caseInsensitive?: boolean } = {},
 ): { newContent: string; count: number; affectedLines: number[] } {
   const matches = findMatches(content, pattern, mode, { ...options, maxMatches: 10000 });
 

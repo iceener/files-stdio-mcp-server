@@ -43,9 +43,11 @@ export const fsWriteInputSchema = z
     operation: z
       .enum(['create', 'update', 'delete'])
       .describe(
-        '"create": Make new file (fails if exists). ' +
-          '"update": Modify existing file (fails if not exists). ' +
-          '"delete": Remove file permanently.',
+        'REQUIRED. The operation type: ' +
+          '"create" = make new file (fails if exists), ' +
+          '"update" = modify existing file (requires "action" parameter), ' +
+          '"delete" = remove file permanently. ' +
+          'NOTE: This is "operation", not "action".',
       ),
 
     // Targeting (for update)
@@ -66,13 +68,19 @@ export const fsWriteInputSchema = z
       ),
 
     patternMode: z
-      .enum(['literal', 'regex', 'fuzzy', 'smart'])
+      .enum(['literal', 'regex', 'fuzzy'])
       .optional()
       .default('literal')
       .describe(
         '"literal" (default): Exact text match. "regex": Regular expression. ' +
-          '"fuzzy": Normalizes whitespace. "smart": Case-insensitive unless pattern has uppercase.',
+          '"fuzzy": Normalizes whitespace.',
       ),
+
+    caseInsensitive: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('Ignore case when matching patterns. Works with all pattern modes.'),
 
     multiline: z
       .boolean()
@@ -98,11 +106,12 @@ export const fsWriteInputSchema = z
       .enum(['replace', 'insert_before', 'insert_after', 'delete_lines'])
       .optional()
       .describe(
-        'What to do with the targeted content. ' +
-          '"replace": Replace target with new content. ' +
-          '"insert_before": Add content before target (target unchanged). ' +
-          '"insert_after": Add content after target (target unchanged). ' +
-          '"delete_lines": Remove target lines entirely.',
+        'REQUIRED when operation="update". Specifies what to do with targeted content: ' +
+          '"replace" = replace target with new content, ' +
+          '"insert_before" = add content before target, ' +
+          '"insert_after" = add content after target, ' +
+          '"delete_lines" = remove target lines. ' +
+          'NOTE: This is "action" (sub-operation), different from "operation" (main type).',
       ),
 
     content: z
@@ -154,7 +163,7 @@ export const fsWriteInputSchema = z
       }
       return true;
     },
-    { message: 'action is required for update operation', path: ['action'] },
+    { message: '"action" parameter is required when operation="update". Use action="replace", "insert_before", "insert_after", or "delete_lines".', path: ['action'] },
   )
   .refine(
     (data) => {
@@ -420,7 +429,7 @@ async function updateFile(
         input.pattern,
         content,
         input.patternMode as PatternMode,
-        { multiline: input.multiline },
+        { multiline: input.multiline, caseInsensitive: input.caseInsensitive },
       );
 
       if (result.count === 0) {
@@ -482,6 +491,7 @@ async function updateFile(
       input.patternMode as PatternMode,
       {
         multiline: input.multiline,
+        caseInsensitive: input.caseInsensitive,
       },
     );
 
@@ -507,6 +517,7 @@ async function updateFile(
           input.patternMode as PatternMode,
           {
             multiline: input.multiline,
+            caseInsensitive: input.caseInsensitive,
             maxMatches: 10,
           },
         );

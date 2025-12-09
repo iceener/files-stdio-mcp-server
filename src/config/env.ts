@@ -46,6 +46,10 @@ function parseLogLevel(value: string | undefined): LogLevel {
  */
 function parseMounts(): Mount[] {
   const rootsEnv = process.env['FS_ROOTS'] ?? process.env['FS_ROOT'] ?? '.';
+  // DEBUG: Log what we received
+  console.error('[files-mcp] FS_ROOTS:', process.env['FS_ROOTS']);
+  console.error('[files-mcp] FS_ROOT:', process.env['FS_ROOT']);
+  console.error('[files-mcp] Using:', rootsEnv);
   const paths = rootsEnv
     .split(',')
     .map((p) => p.trim())

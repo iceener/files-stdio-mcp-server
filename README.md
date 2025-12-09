@@ -28,7 +28,7 @@ The result: an agent that can reliably manage your Obsidian vault, documentation
 - ✅ **Directory Exploration** — tree view with file counts, sizes, timestamps
 - ✅ **File Reading** — line-numbered content with checksums for safe editing
 - ✅ **Find Files** — recursive search by filename patterns (`*.md`, `config.json`)
-- ✅ **Content Search** — literal, regex, fuzzy, and smart pattern matching
+- ✅ **Content Search** — literal, regex, fuzzy pattern matching with optional case-insensitivity
 - ✅ **Preset Patterns** — built-in Obsidian patterns (wikilinks, tags, tasks, headings)
 - ✅ **Safe Editing** — checksum verification, dry-run preview, unified diffs
 - ✅ **Batch Operations** — `replaceAll` for bulk renames across a file
@@ -186,7 +186,8 @@ Explore directories, read files, find files by name, or search content.
   
   // Searching content
   pattern?: string;                // Text to search for
-  patternMode?: "literal" | "regex" | "fuzzy" | "smart";
+  patternMode?: "literal" | "regex" | "fuzzy";
+  caseInsensitive?: boolean;        // Ignore case when matching
   preset?: "wikilinks" | "tags" | "tasks" | "tasks_open" | "tasks_done" 
          | "headings" | "codeblocks" | "frontmatter";
   
@@ -244,7 +245,8 @@ Create, modify, or delete files with safety features.
   // For update — target by lines OR pattern
   lines?: string;                  // "10-15" — PREFERRED
   pattern?: string;                // Text to find
-  patternMode?: "literal" | "regex" | "fuzzy" | "smart";
+  patternMode?: "literal" | "regex" | "fuzzy";
+  caseInsensitive?: boolean;       // Ignore case
   
   // For update — action
   action?: "replace" | "insert_before" | "insert_after" | "delete_lines";

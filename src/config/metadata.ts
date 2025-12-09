@@ -9,7 +9,9 @@ export const toolsMetadata = {
     description:
       'Explore directories, read files, find files by name, or search content. ' +
       'Returns line numbers and checksums needed for editing. ' +
-      'Supports preset patterns for Obsidian/Markdown (wikilinks, tags, tasks, headings).',
+      'Supports preset patterns for Obsidian/Markdown (wikilinks, tags, tasks, headings). ' +
+      'IMPORTANT: For OR searches (term1 OR term2), use patternMode="regex" with pattern="term1|term2". ' +
+      'Default "literal" mode treats | as literal character, not OR operator.',
     readBeforeUse: false, // This IS the read tool
     annotations: {
       audience: ['agent'],

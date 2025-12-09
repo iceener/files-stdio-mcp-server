@@ -22,7 +22,7 @@
   "tools": [
     {
       "name": "fs_read",
-      "description": "Explore directories, read files, find files by name, or search content. Returns line numbers and checksums needed for editing. Supports preset patterns for Obsidian/Markdown (wikilinks, tags, tasks, headings, codeblocks, frontmatter)."
+      "description": "Explore directories, read files, find files by name, or search content. Returns line numbers and checksums needed for editing. Supports preset patterns for Obsidian/Markdown. IMPORTANT: For OR searches (term1|term2), use patternMode=\"regex\". Default mode treats | as literal text, not OR operator."
     },
     {
       "name": "fs_write",

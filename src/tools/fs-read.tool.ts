@@ -45,12 +45,14 @@ export const fsReadInputSchema = z
       .string()
       .optional()
       .describe(
-        'Search pattern to find within file(s). Matches both file contents AND filenames. ' +
-          'When provided with a file path, returns matching lines with context. ' +
-          'When provided with a directory path, searches recursively. ' +
-          'Files whose names contain the pattern are included even without content matches. ' +
-          'Treated as literal text by default — set patternMode="regex" for regular expressions. ' +
-          'For common patterns, use "preset" instead.',
+        'Search pattern to find within file(s). Matches both file contents AND filenames.\n' +
+          '• With a file path: returns matching lines with context.\n' +
+          '• With a directory path: searches recursively.\n' +
+          'By default, pattern is treated as LITERAL TEXT (not regex). Examples:\n' +
+          '• pattern="TODO" → finds exact text "TODO"\n' +
+          '• pattern="foo|bar" with patternMode="literal" → finds literal "foo|bar" (NOT "foo" or "bar"!)\n' +
+          '• pattern="foo|bar" with patternMode="regex" → finds "foo" OR "bar"\n' +
+          'For OR searches, ALWAYS use patternMode="regex". For common Markdown patterns, use "preset" instead.',
       ),
 
     preset: z
@@ -74,12 +76,24 @@ export const fsReadInputSchema = z
       ),
 
     patternMode: z
-      .enum(['literal', 'regex', 'fuzzy', 'smart'])
+      .enum(['literal', 'regex', 'fuzzy'])
       .optional()
       .default('literal')
       .describe(
-        '"literal" (default): exact text match. "regex": regular expression. ' +
-          '"fuzzy": normalizes whitespace. "smart": case-insensitive unless pattern has uppercase.',
+        'How to interpret the pattern string:\n' +
+          '• "literal" (default): Exact text match. Pattern "foo|bar" searches for literal "foo|bar".\n' +
+          '• "regex": Full regular expression. Pattern "foo|bar" matches "foo" OR "bar". Use for OR searches, wildcards, etc.\n' +
+          '• "fuzzy": Literal match with flexible whitespace. "hello  world" matches "hello world".\n' +
+          'IMPORTANT: To search for multiple terms (OR), you MUST use patternMode="regex" with pattern="term1|term2|term3".',
+      ),
+
+    caseInsensitive: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        'Ignore case when matching. Works with all pattern modes.\n' +
+          'Examples: caseInsensitive=true with pattern="todo" matches "TODO", "Todo", "todo".',
       ),
 
     multiline: z
@@ -718,6 +732,7 @@ async function searchInFile(
     patternMode: PatternMode;
     multiline: boolean;
     wholeWord: boolean;
+    caseInsensitive: boolean;
     context: number;
     maxMatches: number;
     isPreset?: boolean;
@@ -733,6 +748,7 @@ async function searchInFile(
     matches = findMatches(content, patternOrPreset, options.patternMode, {
       multiline: options.multiline,
       wholeWord: options.wholeWord,
+      caseInsensitive: options.caseInsensitive,
       maxMatches: options.maxMatches,
     });
   }
@@ -755,6 +771,7 @@ async function searchDirectory(
     patternMode: PatternMode;
     multiline: boolean;
     wholeWord: boolean;
+    caseInsensitive: boolean;
     context: number;
     depth: number;
     types?: string[];
@@ -825,6 +842,7 @@ async function searchDirectory(
             patternMode: options.patternMode,
             multiline: options.multiline,
             wholeWord: options.wholeWord,
+            caseInsensitive: options.caseInsensitive,
             context: options.context,
             maxMatches: options.maxMatches - allMatches.length,
             isPreset: options.isPreset,
@@ -1091,6 +1109,16 @@ MODES (automatically detected):
    Returns: Matching lines with context and line numbers.
    Use to: Find specific content inside files.
 
+PATTERN MODES (critical for correct searching):
+- patternMode="literal" (DEFAULT): Exact text. "foo|bar" matches literal "foo|bar".
+- patternMode="regex": Regular expression. "foo|bar" matches "foo" OR "bar".
+- patternMode="fuzzy": Flexible whitespace literal.
+- caseInsensitive=true: Ignore case (works with any mode).
+
+⚠️ COMMON MISTAKE: Using literal mode with "term1|term2" expecting OR search.
+   This will search for the literal string "term1|term2" and find NOTHING!
+   For OR searches, ALWAYS use: patternMode="regex", pattern="term1|term2"
+
 PRESET PATTERNS (for Obsidian/Markdown):
 - preset="wikilinks" → find [[links]]
 - preset="tags" → find #tags
@@ -1198,6 +1226,7 @@ TIPS:
               patternMode: input.patternMode as PatternMode,
               multiline: input.multiline,
               wholeWord: input.wholeWord,
+              caseInsensitive: input.caseInsensitive,
               context: input.context,
               depth: input.depth,
               types: input.types,
@@ -1302,6 +1331,7 @@ TIPS:
           patternMode: input.patternMode as PatternMode,
           multiline: input.multiline,
           wholeWord: input.wholeWord,
+          caseInsensitive: input.caseInsensitive,
           context: input.context,
           depth: input.depth,
           types: input.types,
@@ -1357,6 +1387,7 @@ TIPS:
             patternMode: input.patternMode as PatternMode,
             multiline: input.multiline,
             wholeWord: input.wholeWord,
+            caseInsensitive: input.caseInsensitive,
             context: input.context,
             maxMatches: input.maxMatches,
             isPreset,
