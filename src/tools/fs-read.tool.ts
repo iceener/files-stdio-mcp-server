@@ -155,7 +155,8 @@ export const fsReadInputSchema = z
       .optional()
       .describe(
         'Find files by name (not content). Searches recursively from path. ' +
-          'Examples: "mega.md" finds exact match, "*.md" finds all markdown files. ' +
+          'Partial matching by default: "music" finds "music.md", "my-music-file.txt", etc. ' +
+          'Use wildcards for more control: "*.md" (all markdown), "config.json" (exact match with extension). ' +
           'Returns list of matching file paths. Use this when you know the filename but not the location.',
       ),
 
@@ -994,7 +995,13 @@ async function findFiles(
 
   // Convert find pattern to regex
   // Support simple wildcards: * matches anything, ? matches single char
-  const regexPattern = findPattern
+  // If no wildcards AND no extension, do partial matching (wrap in *...*)
+  // If pattern has extension (contains .), treat as exact match
+  const hasWildcards = /[*?]/.test(findPattern);
+  const hasExtension = /\.[a-zA-Z0-9]+$/.test(findPattern);
+  const effectivePattern = hasWildcards || hasExtension ? findPattern : `*${findPattern}*`;
+  
+  const regexPattern = effectivePattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex special chars except * and ?
     .replace(/\*/g, '.*')
     .replace(/\?/g, '.');
@@ -1101,9 +1108,10 @@ MODES (automatically detected):
    Use to: See exact content before editing, get line numbers for precise edits.
 
 3. FIND FILES BY NAME — path + find
-   Example: { path: ".", find: "mega.md" } or { path: ".", find: "*.md" }
+   Example: { path: ".", find: "music" } finds music.md, my-music.txt, etc. (partial match)
+   Example: { path: ".", find: "*.md" } finds all markdown files (wildcard)
    Returns: List of matching file paths anywhere under the directory.
-   Use to: Locate a file when you know its name but not its location.
+   Use to: Locate a file when you know part of the filename but not its location.
 
 4. SEARCH CONTENT — path + pattern OR path + preset
    Returns: Matching lines with context and line numbers.
@@ -1130,8 +1138,8 @@ PRESET PATTERNS (for Obsidian/Markdown):
 - preset="frontmatter" → find YAML ---
 
 TIPS:
-- Use 'find' to locate files: { path: ".", find: "config.json" }
-- Use 'pattern' for custom search: { path: ".", pattern: "TODO" }
+- Use 'find' to locate files: { path: ".", find: "config" } finds config.json, config.yaml, etc.
+- Use 'pattern' for content search: { path: ".", pattern: "TODO" }
 - Use 'preset' for common patterns: { path: ".", preset: "tasks_open" }
 - Note the CHECKSUM when reading a file you plan to edit
 - Line numbers are 1-indexed (first line is 1)`,
