@@ -582,7 +582,8 @@ describe('Obsidian: Vault-wide Search', () => {
     const result = await runFsRead({
       path: 'vault',
       pattern: 'TypeScript',
-      patternMode: 'smart',
+      patternMode: 'literal',
+      caseInsensitive: true,
       depth: 10,
       output: 'list',
     });

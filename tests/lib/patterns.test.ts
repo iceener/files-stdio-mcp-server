@@ -25,19 +25,24 @@ describe('buildPattern', () => {
     // Note: fuzzy normalizes pattern whitespace, not necessarily target
   });
 
-  test('smart mode is case-insensitive for lowercase patterns', () => {
-    // Note: buildPattern returns a global regex, so lastIndex persists between tests
-    // Create separate regexes or reset lastIndex
-    const regex1 = buildPattern('react', 'smart');
-    const regex2 = buildPattern('react', 'smart');
+  test('caseInsensitive option makes matching case-insensitive', () => {
+    const regex1 = buildPattern('react', 'literal', { caseInsensitive: true });
+    const regex2 = buildPattern('react', 'literal', { caseInsensitive: true });
     expect(regex1.test('react')).toBe(true);
-    expect(regex2.test('React')).toBe(true); // Fresh regex to avoid lastIndex issue
+    expect(regex2.test('React')).toBe(true);
   });
 
-  test('smart mode is case-sensitive when pattern has uppercase', () => {
-    const regex = buildPattern('React', 'smart');
+  test('without caseInsensitive, matching is case-sensitive', () => {
+    const regex = buildPattern('React', 'literal');
     expect(regex.test('React')).toBe(true);
     expect(regex.test('react')).toBe(false);
+  });
+
+  test('caseInsensitive works with regex mode', () => {
+    const regex1 = buildPattern('foo|bar', 'regex', { caseInsensitive: true });
+    const regex2 = buildPattern('foo|bar', 'regex', { caseInsensitive: true });
+    expect(regex1.test('FOO')).toBe(true);
+    expect(regex2.test('Bar')).toBe(true);
   });
 
   test('wholeWord option matches word boundaries', () => {

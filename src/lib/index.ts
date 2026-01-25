@@ -50,3 +50,12 @@ export {
   type PresetPattern,
   replaceAllMatches,
 } from './patterns.js';
+export {
+  type AutoResolveResult,
+  type FileSearchOptions,
+  type FileSearchResult,
+  invalidateFileIndex,
+  rebuildFileIndex,
+  searchFiles,
+  tryAutoResolve,
+} from './file-search.js';

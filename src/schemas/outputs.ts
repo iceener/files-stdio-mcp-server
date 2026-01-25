@@ -17,6 +17,8 @@ export const treeEntrySchema = z.object({
   children: z.number().optional().describe('Number of children (directories only)'),
   size: z.string().optional().describe('Human-readable size (files only, when details=true)'),
   modified: z.string().optional().describe('Last modified date (when details=true)'),
+  score: z.number().optional().describe('Fuzzy match score (higher = better match, for find results)'),
+  matchIndices: z.array(z.number()).optional().describe('Indices of matched characters for UI highlighting'),
 });
 
 /** Search match result */

@@ -32,6 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",
+    "fuzzysort": "^3.1.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.24.5"
   },

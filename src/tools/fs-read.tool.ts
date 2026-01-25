@@ -23,7 +23,9 @@ import {
   type PatternMode,
   parseLineRange,
   resolvePath as resolveVirtualPath,
+  searchFiles,
   shouldExclude,
+  tryAutoResolve,
 } from '../lib/index.js';
 import type { HandlerExtra } from '../types/index.js';
 
@@ -126,10 +128,9 @@ export const fsReadInputSchema = z
       .min(1)
       .max(20)
       .optional()
-      .default(7)
       .describe(
-        'How many directory levels deep to traverse. Default 7. ' +
-          'Applies to directory listing, search, and find operations.',
+        'How many directory levels deep to traverse. ' +
+          'Defaults to 1 for directory listing, and 5 for search/find operations.',
       ),
 
     context: z
@@ -154,10 +155,12 @@ export const fsReadInputSchema = z
       .string()
       .optional()
       .describe(
-        'Find files by name (not content). Searches recursively from path. ' +
-          'Partial matching by default: "music" finds "music.md", "my-music-file.txt", etc. ' +
-          'Use wildcards for more control: "*.md" (all markdown), "config.json" (exact match with extension). ' +
-          'Returns list of matching file paths. Use this when you know the filename but not the location.',
+        'FUZZY find files by name (not content). Searches recursively from path with smart ranking.\n' +
+          '• Fuzzy matching: "util" finds "utils.ts", "my-utility.js", etc.\n' +
+          '• Multi-term: "mcp index" finds "src/mcp/index.ts" (all terms must match)\n' +
+          '• Smart ranking: exact > prefix > substring, code files boosted, shallow paths preferred\n' +
+          '• Results include match indices for highlighting\n' +
+          'Returns ranked list of matching file paths. Use when you know part of the filename.',
       ),
 
     exclude: z
@@ -977,6 +980,10 @@ async function searchDirectory(
   };
 }
 
+/**
+ * Find files using fuzzy search with smart ranking.
+ * Uses cached file index for fast repeated searches.
+ */
 async function findFiles(
   absPath: string,
   relativePath: string,
@@ -988,81 +995,35 @@ async function findFiles(
     maxFiles: number;
   },
 ): Promise<FsReadResult> {
-  const foundFiles: TreeEntry[] = [];
-  let truncated = false;
+  // Use the new fuzzy search engine
+  const results = await searchFiles(absPath, findPattern, {
+    maxResults: options.maxFiles,
+    includeDirectories: true,
+    respectIgnore: options.respectIgnore,
+    exclude: options.exclude,
+    maxDepth: options.depth,
+  });
 
-  const ignoreMatcher = options.respectIgnore ? await createIgnoreMatcherForDir(absPath) : null;
+  // Convert to TreeEntry format with score info
+  const foundFiles: (TreeEntry & { score?: number; matchIndices?: number[] })[] = results.map((r) => ({
+    path: r.relativePath,
+    kind: r.isDirectory ? 'directory' as const : 'file' as const,
+    score: r.score,
+    matchIndices: r.matchIndices,
+  }));
 
-  // Convert find pattern to regex
-  // Support simple wildcards: * matches anything, ? matches single char
-  // If no wildcards AND no extension, do partial matching (wrap in *...*)
-  // If pattern has extension (contains .), treat as exact match
-  const hasWildcards = /[*?]/.test(findPattern);
-  const hasExtension = /\.[a-zA-Z0-9]+$/.test(findPattern);
-  const effectivePattern = hasWildcards || hasExtension ? findPattern : `*${findPattern}*`;
-  
-  const regexPattern = effectivePattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex special chars except * and ?
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  const findRegex = new RegExp(`^${regexPattern}$`, 'i');
+  const truncated = results.length >= options.maxFiles;
 
-  async function walk(dir: string, relDir: string, currentDepth: number): Promise<void> {
-    if (currentDepth > options.depth || foundFiles.length >= options.maxFiles) {
-      if (foundFiles.length >= options.maxFiles) truncated = true;
-      return;
-    }
-
-    let items: string[];
-    try {
-      items = await fs.readdir(dir);
-    } catch {
-      return;
-    }
-
-    for (const item of items) {
-      if (foundFiles.length >= options.maxFiles) {
-        truncated = true;
-        break;
-      }
-
-      const itemPath = path.join(dir, item);
-      const itemRelPath = relDir ? path.join(relDir, item) : item;
-
-      if (ignoreMatcher?.isIgnored(itemRelPath)) continue;
-      if (options.exclude && shouldExclude(itemRelPath, options.exclude)) continue;
-
-      try {
-        const stat = await fs.stat(itemPath);
-
-        if (stat.isDirectory()) {
-          // Check if directory name matches
-          if (findRegex.test(item)) {
-            foundFiles.push({
-              path: itemRelPath,
-              kind: 'directory',
-              modified: formatRelativeTime(stat.mtime),
-            });
-          }
-          await walk(itemPath, itemRelPath, currentDepth + 1);
-        } else if (stat.isFile()) {
-          // Check if filename matches
-          if (findRegex.test(item)) {
-            foundFiles.push({
-              path: itemRelPath,
-              kind: 'file',
-              size: formatSize(stat.size),
-              modified: formatRelativeTime(stat.mtime),
-            });
-          }
-        }
-      } catch {
-        // Skip errors
-      }
-    }
+  // Build hint based on results
+  let hint: string;
+  if (foundFiles.length === 0) {
+    hint = `No files matching "${findPattern}" found. Try a different pattern, use fuzzy terms like "mcp index", or increase depth.`;
+  } else if (foundFiles.length === 1) {
+    hint = `Found "${foundFiles[0]?.path}". Use fs_read with this path to see its content.`;
+  } else {
+    const topMatch = foundFiles[0];
+    hint = `Found ${foundFiles.length} matching files (ranked by relevance). Top match: "${topMatch?.path}". Use fs_read on a specific path to see its content.`;
   }
-
-  await walk(absPath, relativePath === '.' ? '' : relativePath, 1);
 
   return {
     success: true,
@@ -1070,15 +1031,10 @@ async function findFiles(
     type: 'directory',
     tree: {
       entries: foundFiles,
-      summary: `Found ${foundFiles.length} item(s) matching "${findPattern}"`,
+      summary: `Found ${foundFiles.length} item(s) matching "${findPattern}" (fuzzy search, ranked by relevance)`,
     },
     truncated,
-    hint:
-      foundFiles.length === 0
-        ? `No files matching "${findPattern}" found. Try a different pattern or increase depth.`
-        : foundFiles.length === 1
-          ? `Found "${foundFiles[0]?.path}". Use fs_read with this path to see its content.`
-          : `Found ${foundFiles.length} matching files. Use fs_read on a specific path to see its content.`,
+    hint,
   };
 }
 
@@ -1107,11 +1063,16 @@ MODES (automatically detected):
    Returns: Full content with LINE NUMBERS and CHECKSUM.
    Use to: See exact content before editing, get line numbers for precise edits.
 
-3. FIND FILES BY NAME — path + find
-   Example: { path: ".", find: "music" } finds music.md, my-music.txt, etc. (partial match)
-   Example: { path: ".", find: "*.md" } finds all markdown files (wildcard)
-   Returns: List of matching file paths anywhere under the directory.
-   Use to: Locate a file when you know part of the filename but not its location.
+3. FIND FILES BY NAME (FUZZY) — path + find
+   Example: { path: ".", find: "util" } finds utils.ts, my-utility.js, etc. (fuzzy)
+   Example: { path: ".", find: "mcp index" } finds src/mcp/index.ts (multi-term)
+   Returns: RANKED list of matching file paths (best matches first).
+   Features: Fuzzy matching, multi-term queries, smart scoring (exact > prefix > substring).
+   Use to: Locate files when you know part of the filename.
+
+AUTO-RESOLVE: If you request a file path that doesn't exist but the filename is unique,
+   the tool will automatically resolve it and read the correct file.
+   If multiple files match, you'll see a list of candidates to choose from.
 
 4. SEARCH CONTENT — path + pattern OR path + preset
    Returns: Matching lines with context and line numbers.
@@ -1163,9 +1124,12 @@ TIPS:
 
     const input = parsed.data;
 
+    // Determine depth: default to 1 for listing, 5 for search/find
+    const effectiveDepth = input.depth ?? (input.find || input.pattern || input.preset ? 5 : 1);
+
     // Special case: root path shows mount listing (or single mount contents)
     if (isRootPath(input.path) && !input.find && !input.pattern && !input.preset) {
-      const result = await listMountsOrSingleMount(input.depth, {
+      const result = await listMountsOrSingleMount(effectiveDepth, {
         types: input.types,
         exclude: input.exclude,
         respectIgnore: input.respectIgnore,
@@ -1191,7 +1155,7 @@ TIPS:
 
         for (const mount of mounts) {
           const findResult = await findFiles(mount.absolutePath, mount.name, input.find, {
-            depth: input.depth,
+            depth: effectiveDepth,
             exclude: input.exclude,
             respectIgnore: input.respectIgnore,
             maxFiles: Math.floor(input.maxFiles / mounts.length),
@@ -1236,7 +1200,7 @@ TIPS:
               wholeWord: input.wholeWord,
               caseInsensitive: input.caseInsensitive,
               context: input.context,
-              depth: input.depth,
+              depth: effectiveDepth,
               types: input.types,
               exclude: input.exclude,
               respectIgnore: input.respectIgnore,
@@ -1268,7 +1232,7 @@ TIPS:
         };
       } else {
         // Should not reach here, but satisfy TypeScript
-        result = await listMountsOrSingleMount(input.depth, {
+        result = await listMountsOrSingleMount(effectiveDepth, {
           types: input.types,
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
@@ -1291,6 +1255,9 @@ TIPS:
 
       // Detect if user tried an absolute path
       const isAbsolute = input.path.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(input.path);
+      
+      // Suggest corrected path for absolute paths
+      const suggestedPath = isAbsolute ? input.path.replace(/^\/+/, '').replace(/^[a-zA-Z]:[/\\]+/, '') : null;
 
       const result: FsReadResult = {
         success: false,
@@ -1298,8 +1265,11 @@ TIPS:
         type: 'file',
         error: { code: 'OUT_OF_SCOPE', message: resolved.error },
         hint: isAbsolute
-          ? `This is a SANDBOXED filesystem — you cannot access arbitrary system paths. ` +
-            `Start with fs_read(".") to see available mounts, then explore from there.`
+          ? `This is a SANDBOXED filesystem — absolute paths are not allowed. ` +
+            (suggestedPath 
+              ? `Try: fs_read("${suggestedPath}") — use relative paths without leading "/". ` 
+              : '') +
+            `If unsure, use fs_read(".") first to see available paths.`
           : `Path not found. Try fs_read(".") to see available mounts, or fs_read(${mountExamples}) to explore a mount.`,
       };
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -1312,12 +1282,54 @@ TIPS:
     try {
       stat = await fs.stat(absolutePath);
     } catch {
+      // Try auto-resolve: if the filename is unique, resolve to that path
+      const mountName = virtualPath.split('/')[0] ?? '';
+      const mount = getMounts().find((m) => m.name === mountName);
+
+      if (mount) {
+        const autoResolve = await tryAutoResolve(mount.absolutePath, virtualPath.slice(mountName.length + 1));
+
+        if (autoResolve.resolved && autoResolve.resolvedPath) {
+          // Found unique match - read the resolved file instead
+          const resolvedVirtualPath = `${mountName}/${autoResolve.resolvedPath}`;
+          const resolvedAbsolutePath = path.join(mount.absolutePath, autoResolve.resolvedPath);
+
+          try {
+            stat = await fs.stat(resolvedAbsolutePath);
+
+            // Read the resolved file
+            const resolvedResult = await readFile(resolvedAbsolutePath, resolvedVirtualPath, {
+              lines: input.lines,
+            });
+
+            // Add auto-resolve hint
+            const autoResolveHint = `Auto-resolved "${virtualPath}" → "${resolvedVirtualPath}". `;
+            resolvedResult.hint = autoResolveHint + (resolvedResult.hint ?? '');
+
+            return { content: [{ type: 'text', text: JSON.stringify(resolvedResult, null, 2) }] };
+          } catch {
+            // Fall through to NOT_FOUND
+          }
+        } else if (autoResolve.ambiguous && autoResolve.candidates.length > 0) {
+          // Multiple matches - show candidates
+          const candidates = autoResolve.candidates.slice(0, 5).map((c) => `${mountName}/${c}`);
+          const result: FsReadResult = {
+            success: false,
+            path: virtualPath,
+            type: 'file',
+            error: { code: 'AMBIGUOUS_PATH', message: `Multiple files match "${path.basename(virtualPath)}"` },
+            hint: `Found ${autoResolve.candidates.length} files with this name. Did you mean:\n${candidates.map((c) => `  • ${c}`).join('\n')}${autoResolve.candidates.length > 5 ? `\n  ... and ${autoResolve.candidates.length - 5} more` : ''}`,
+          };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+      }
+
       const result: FsReadResult = {
         success: false,
         path: virtualPath,
         type: 'file',
         error: { code: 'NOT_FOUND', message: `Path does not exist: ${virtualPath}` },
-        hint: 'Use fs_read on the parent directory to see what exists, or fs_read(".") to see mount points.',
+        hint: 'Use fs_read on the parent directory to see what exists, or fs_read(".") to see mount points. You can also use find="filename" to search.',
       };
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
@@ -1328,7 +1340,7 @@ TIPS:
       if (input.find) {
         // Find files by name
         result = await findFiles(absolutePath, virtualPath, input.find, {
-          depth: input.depth,
+          depth: effectiveDepth,
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
           maxFiles: input.maxFiles,
@@ -1341,7 +1353,7 @@ TIPS:
           wholeWord: input.wholeWord,
           caseInsensitive: input.caseInsensitive,
           context: input.context,
-          depth: input.depth,
+          depth: effectiveDepth,
           types: input.types,
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
@@ -1352,7 +1364,7 @@ TIPS:
         });
       } else {
         // List directory
-        const { entries, truncated } = await listDirectory(absolutePath, virtualPath, input.depth, {
+        const { entries, truncated } = await listDirectory(absolutePath, virtualPath, effectiveDepth, {
           types: input.types,
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
