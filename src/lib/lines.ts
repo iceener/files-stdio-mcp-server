@@ -191,7 +191,8 @@ export function replaceLines(
 export function insertBeforeLine(content: string, line: number, insertion: string): string {
   const lines = content.split('\n');
   const insertIndex = Math.max(0, line - 1);
-  lines.splice(insertIndex, 0, insertion);
+  // Trim trailing newlines to prevent extra blank lines when joining
+  lines.splice(insertIndex, 0, insertion.replace(/\n+$/, ''));
   return lines.join('\n');
 }
 
@@ -211,7 +212,8 @@ export function insertBeforeLine(content: string, line: number, insertion: strin
 export function insertAfterLine(content: string, line: number, insertion: string): string {
   const lines = content.split('\n');
   const insertIndex = Math.min(lines.length, line);
-  lines.splice(insertIndex, 0, insertion);
+  // Trim trailing newlines to prevent extra blank lines when joining
+  lines.splice(insertIndex, 0, insertion.replace(/\n+$/, ''));
   return lines.join('\n');
 }
 
