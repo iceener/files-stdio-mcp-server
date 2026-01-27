@@ -5,6 +5,15 @@
 export { generateChecksum, verifyChecksum } from './checksum.js';
 export { countDiffLines, generateDiff } from './diff.js';
 export {
+  type AutoResolveResult,
+  type FileSearchOptions,
+  type FileSearchResult,
+  invalidateFileIndex,
+  rebuildFileIndex,
+  searchFiles,
+  tryAutoResolve,
+} from './file-search.js';
+export {
   getExtensionsForType,
   isTextFile,
   matchesGlob,
@@ -54,12 +63,3 @@ export {
   replaceAllMatches,
   UnsafeRegexError,
 } from './patterns.js';
-export {
-  type AutoResolveResult,
-  type FileSearchOptions,
-  type FileSearchResult,
-  invalidateFileIndex,
-  rebuildFileIndex,
-  searchFiles,
-  tryAutoResolve,
-} from './file-search.js';

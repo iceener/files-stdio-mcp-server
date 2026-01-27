@@ -36,7 +36,10 @@ export const fsReadOutputSchema = z.object({
   type: z.enum(['file', 'directory']).describe('Type of result'),
 
   // Directory listing
-  entries: z.array(treeEntrySchema).optional().describe('Directory entries (when path is a directory)'),
+  entries: z
+    .array(treeEntrySchema)
+    .optional()
+    .describe('Directory entries (when path is a directory)'),
   summary: z.string().optional().describe('Human-readable summary'),
 
   // File content

@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Files MCP - Tool Overview</title>
+  <style>
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --border: #30363d;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+      --accent-blue: #58a6ff;
+      --accent-green: #3fb950;
+      --accent-purple: #a371f7;
+      --accent-orange: #d29922;
+      --accent-red: #f85149;
+      --accent-pink: #db61a2;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding: 3rem 0;
+      background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+      border-bottom: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    header h1 {
+      font-size: 2.5rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+    }
+
+    .badge-container {
+      display: flex;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      padding: 0.35rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .tools-grid {
+      display: grid;
+      gap: 2rem;
+    }
+
+    .tool-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .tool-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .tool-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .tool-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+
+    .tool-icon.read { background: linear-gradient(135deg, #238636, #2ea043); }
+    .tool-icon.write { background: linear-gradient(135deg, #1f6feb, #58a6ff); }
+    .tool-icon.search { background: linear-gradient(135deg, #8957e5, #a371f7); }
+    .tool-icon.manage { background: linear-gradient(135deg, #9e6a03, #d29922); }
+
+    .tool-title-section h2 {
+      font-size: 1.3rem;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--accent-blue);
+    }
+
+    .tool-title-section p {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+
+    .tool-body {
+      padding: 1.5rem;
+    }
+
+    .tool-description {
+      color: var(--text-secondary);
+      margin-bottom: 1.5rem;
+      padding: 1rem;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      border-left: 3px solid var(--accent-blue);
+    }
+
+    .schema-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .schema-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .schema-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .schema-title::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .schema-title.input::before { background: var(--accent-green); }
+    .schema-title.output::before { background: var(--accent-purple); }
+
+    .schema-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .schema-table th {
+      text-align: left;
+      padding: 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .schema-table td {
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .param-name {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--accent-blue);
+      font-weight: 500;
+    }
+
+    .param-type {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--accent-orange);
+      font-size: 0.8rem;
+    }
+
+    .param-required {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      margin-left: 0.5rem;
+      font-weight: 500;
+    }
+
+    .param-required.required {
+      background: rgba(248, 81, 73, 0.15);
+      color: var(--accent-red);
+    }
+
+    .param-required.optional {
+      background: rgba(139, 148, 158, 0.15);
+      color: var(--text-muted);
+    }
+
+    .param-desc {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+
+    .param-default {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .param-default code {
+      background: var(--bg-tertiary);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--accent-green);
+    }
+
+    .enum-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+    }
+
+    .enum-value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent-purple);
+    }
+
+    .output-structure {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.8rem;
+      overflow-x: auto;
+    }
+
+    .output-structure .key {
+      color: var(--accent-blue);
+    }
+
+    .output-structure .type {
+      color: var(--accent-orange);
+    }
+
+    .output-structure .comment {
+      color: var(--text-muted);
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      border-top: 1px solid var(--border);
+      margin-top: 3rem;
+    }
+
+    footer a {
+      color: var(--accent-blue);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        padding: 1rem;
+      }
+
+      header h1 {
+        font-size: 1.75rem;
+      }
+
+      .tool-header {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .schema-table {
+        font-size: 0.8rem;
+      }
+
+      .schema-table th,
+      .schema-table td {
+        padding: 0.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📁 Files MCP</h1>
+      <p>Sandboxed filesystem tools for AI assistants</p>
+      <div class="badge-container">
+        <span class="badge">MCP Protocol</span>
+        <span class="badge">TypeScript</span>
+        <span class="badge">Sandboxed</span>
+        <span class="badge">4 Tools</span>
+      </div>
+    </header>
+
+    <div class="tools-grid">
+      <!-- fs_read Tool -->
+      <article class="tool-card">
+        <div class="tool-header">
+          <div class="tool-icon read">📖</div>
+          <div class="tool-title-section">
+            <h2>fs_read</h2>
+            <p>Read files and list directories</p>
+          </div>
+        </div>
+        <div class="tool-body">
+          <div class="tool-description">
+            Explore the filesystem with explicit modes (tree, list, content) and pagination. Automatically detects file vs directory in auto mode, and returns line-numbered content with checksums for files.
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title input">Input Schema</h3>
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="param-name">path</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Relative path to file or directory. Use "." for root, "docs/" for directories.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">mode</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">Exploration mode for directories and files.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">auto</span>
+                      <span class="enum-value">tree</span>
+                      <span class="enum-value">list</span>
+                      <span class="enum-value">content</span>
+                    </div>
+                    <div class="param-default">Default: <code>auto</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">limit</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Max entries returned for directory listings.</span>
+                    <div class="param-default">Default: <code>100</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">offset</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Skip the first N entries for directory listings.</span>
+                    <div class="param-default">Default: <code>0</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">lines</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Limit file reading to specific lines. Format: "10" or "10-50".</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">depth</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Directory listing depth (1-20).</span>
+                    <div class="param-default">Default: <code>1</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">details</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Include file sizes and modification times.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">types</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string[]</span></td>
+                  <td>
+                    <span class="param-desc">Filter by file extensions: ["ts", "js"]</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">glob</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Glob pattern filter: "**/*.ts"</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">exclude</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string[]</span></td>
+                  <td>
+                    <span class="param-desc">Patterns to exclude: ["**/test/**"]</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">respectIgnore</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Respect .gitignore files.</span>
+                    <div class="param-default">Default: <code>true</code></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title output">Output Schema</h3>
+            <div class="output-structure">
+<pre>{
+  <span class="key">"success"</span>: <span class="type">boolean</span>,
+  <span class="key">"path"</span>: <span class="type">string</span>,
+  <span class="key">"type"</span>: <span class="type">"directory" | "file"</span>,
+  <span class="comment">// For directories:</span>
+  <span class="key">"entries"</span>: [{ <span class="key">path</span>, <span class="key">kind</span>, <span class="key">size?</span>, <span class="key">modified?</span>, <span class="key">children?</span> }],
+  <span class="key">"summary"</span>: <span class="type">string</span>,
+  <span class="key">"stats"</span>: {
+    <span class="key">"returned"</span>: <span class="type">number</span>,
+    <span class="key">"total"</span>: <span class="type">number</span>,
+    <span class="key">"offset"</span>: <span class="type">number</span>,
+    <span class="key">"limit"</span>: <span class="type">number</span>,
+    <span class="key">"hasMore"</span>: <span class="type">boolean</span>,
+    <span class="key">"truncated"</span>: <span class="type">boolean</span>
+  },
+  <span class="comment">// For files:</span>
+  <span class="key">"content"</span>: {
+    <span class="key">"text"</span>: <span class="type">string</span>,       <span class="comment">// with line numbers</span>
+    <span class="key">"checksum"</span>: <span class="type">string</span>,   <span class="comment">// for safe editing</span>
+    <span class="key">"totalLines"</span>: <span class="type">number</span>,
+    <span class="key">"range?"</span>: { <span class="key">start</span>, <span class="key">end</span> },
+    <span class="key">"truncated"</span>: <span class="type">boolean</span>
+  },
+  <span class="key">"hint"</span>: <span class="type">string</span>
+}</pre>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- fs_write Tool -->
+      <article class="tool-card">
+        <div class="tool-header">
+          <div class="tool-icon write">✏️</div>
+          <div class="tool-title-section">
+            <h2>fs_write</h2>
+            <p>Create and update file content</p>
+          </div>
+        </div>
+        <div class="tool-body">
+          <div class="tool-description">
+            Create new files or update existing ones with line-based targeting. Supports dry-run mode to preview changes before applying. Uses checksums to prevent overwriting concurrent modifications.
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title input">Input Schema</h3>
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="param-name">path</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Relative path to file. Parent dirs created automatically.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">operation</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">The operation type to perform.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">create</span>
+                      <span class="enum-value">update</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">action</span>
+                    <span class="param-required optional">required for update</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">What to do with targeted content.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">replace</span>
+                      <span class="enum-value">insert_before</span>
+                      <span class="enum-value">insert_after</span>
+                      <span class="enum-value">delete_lines</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">lines</span>
+                    <span class="param-required optional">required for update</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Target lines. Format: "10" or "10-15".</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">content</span>
+                    <span class="param-required optional">conditional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Content to write. Required except for delete_lines.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">checksum</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Expected checksum from fs_read. Prevents stale overwrites.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">dryRun</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Preview changes without applying.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">createDirs</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Create parent directories if missing.</span>
+                    <div class="param-default">Default: <code>true</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">ensureTrailingNewline</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Ensure file ends with newline (POSIX).</span>
+                    <div class="param-default">Default: <code>true</code></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title output">Output Schema</h3>
+            <div class="output-structure">
+<pre>{
+  <span class="key">"success"</span>: <span class="type">boolean</span>,
+  <span class="key">"path"</span>: <span class="type">string</span>,
+  <span class="key">"operation"</span>: <span class="type">"create" | "update"</span>,
+  <span class="key">"applied"</span>: <span class="type">boolean</span>,       <span class="comment">// false if dryRun</span>
+  <span class="key">"result"</span>: {
+    <span class="key">"action"</span>: <span class="type">string</span>,       <span class="comment">// e.g. "replaced", "created"</span>
+    <span class="key">"linesAffected"</span>: <span class="type">number</span>,
+    <span class="key">"newChecksum"</span>: <span class="type">string</span>,
+    <span class="key">"diff?"</span>: <span class="type">string</span>         <span class="comment">// unified diff</span>
+  },
+  <span class="key">"error?"</span>: { <span class="key">code</span>, <span class="key">message</span>, <span class="key">recoveryHint?</span> },
+  <span class="key">"hint"</span>: <span class="type">string</span>
+}</pre>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- fs_search Tool -->
+      <article class="tool-card">
+        <div class="tool-header">
+          <div class="tool-icon search">🔍</div>
+          <div class="tool-title-section">
+            <h2>fs_search</h2>
+            <p>Find files by name and search content</p>
+          </div>
+        </div>
+        <div class="tool-body">
+          <div class="tool-description">
+            Powerful search combining filename matching (fuzzy) and content search. Supports literal text, regex patterns, and fuzzy matching. Includes preview mode and pagination for large result sets.
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title input">Input Schema</h3>
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="param-name">path</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Starting directory. Use "." for all mounts.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">query</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Search term for filenames and content.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">target</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">What to search.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">all</span>
+                      <span class="enum-value">filename</span>
+                      <span class="enum-value">content</span>
+                    </div>
+                    <div class="param-default">Default: <code>all</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">preview</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Lightweight output with per-file match counts only.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">patternMode</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">How to interpret the query.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">literal</span>
+                      <span class="enum-value">regex</span>
+                      <span class="enum-value">fuzzy</span>
+                    </div>
+                    <div class="param-default">Default: <code>literal</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">caseInsensitive</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Ignore case in content search.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">wholeWord</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Match whole words only.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">multiline</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Allow matches spanning multiple lines.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">types</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string[]</span></td>
+                  <td>
+                    <span class="param-desc">Filter by file type: ["ts", "md"]</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">glob</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Glob pattern filter: "**/*.ts"</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">exclude</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">string[]</span></td>
+                  <td>
+                    <span class="param-desc">Patterns to exclude from search.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">depth</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Max directory traversal depth (1-20).</span>
+                    <div class="param-default">Default: <code>5</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">maxResults</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Search cap for matches (1-1000).</span>
+                    <div class="param-default">Default: <code>100</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">limit</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Max results returned per section.</span>
+                    <div class="param-default">Default: <code>50</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">offset</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Skip the first N results per section.</span>
+                    <div class="param-default">Default: <code>0</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">context</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">number</span></td>
+                  <td>
+                    <span class="param-desc">Context lines around content matches (0-20).</span>
+                    <div class="param-default">Default: <code>3</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">respectIgnore</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Respect .gitignore files.</span>
+                    <div class="param-default">Default: <code>true</code></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title output">Output Schema</h3>
+            <div class="output-structure">
+<pre>{
+  <span class="key">"success"</span>: <span class="type">boolean</span>,
+  <span class="key">"query"</span>: <span class="type">string</span>,
+  <span class="key">"target"</span>: <span class="type">"all" | "filename" | "content"</span>,
+  <span class="key">"results"</span>: {
+    <span class="key">"byFilename"</span>: [{ <span class="key">path</span>, <span class="key">score</span>, <span class="key">matchIndices</span> }],
+    <span class="key">"byContent"</span>: [{
+      <span class="key">"path"</span>: <span class="type">string</span>,
+      <span class="key">"matches?"</span>: [{
+        <span class="key">line</span>, <span class="key">endLine</span>, <span class="key">matchCount</span>, <span class="key">text</span>,
+        <span class="key">context</span>: { <span class="key">before</span>, <span class="key">match</span>, <span class="key">after</span> }
+      }],
+      <span class="key">"matchCount?"</span>: <span class="type">number</span> <span class="comment">// preview=true</span>
+    }]
+  },
+  <span class="key">"stats"</span>: { <span class="key">filenameMatches</span>, <span class="key">contentMatches</span>, <span class="key">filesSearched</span> },
+  <span class="key">"page"</span>: {
+    <span class="key">"limit"</span>: <span class="type">number</span>,
+    <span class="key">"offset"</span>: <span class="type">number</span>,
+    <span class="key">"byFilename"</span>: { <span class="key">returned</span>, <span class="key">total</span>, <span class="key">hasMore</span> },
+    <span class="key">"byContent"</span>: { <span class="key">returned</span>, <span class="key">total</span>, <span class="key">hasMore</span> }
+  },
+  <span class="key">"truncated"</span>: <span class="type">boolean</span>,
+  <span class="key">"hint"</span>: <span class="type">string</span>
+}</pre>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- fs_manage Tool -->
+      <article class="tool-card">
+        <div class="tool-header">
+          <div class="tool-icon manage">⚙️</div>
+          <div class="tool-title-section">
+            <h2>fs_manage</h2>
+            <p>Structural filesystem operations</p>
+          </div>
+        </div>
+        <div class="tool-body">
+          <div class="tool-description">
+            Perform structural operations on files and directories including delete, rename, move, copy, mkdir, and stat. Supports recursive operations and force overwrite options.
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title input">Input Schema</h3>
+            <table class="schema-table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="param-name">operation</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">enum</span></td>
+                  <td>
+                    <span class="param-desc">The structural operation to perform.</span>
+                    <div class="enum-values">
+                      <span class="enum-value">delete</span>
+                      <span class="enum-value">rename</span>
+                      <span class="enum-value">move</span>
+                      <span class="enum-value">copy</span>
+                      <span class="enum-value">mkdir</span>
+                      <span class="enum-value">stat</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">path</span>
+                    <span class="param-required required">required</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Source file or directory path.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">target</span>
+                    <span class="param-required optional">conditional</span>
+                  </td>
+                  <td><span class="param-type">string</span></td>
+                  <td>
+                    <span class="param-desc">Destination path. Required for rename/move/copy.</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">recursive</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">For delete: remove directory contents. For mkdir: create parent directories. For copy/move: include subdirectories.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="param-name">force</span>
+                    <span class="param-required optional">optional</span>
+                  </td>
+                  <td><span class="param-type">boolean</span></td>
+                  <td>
+                    <span class="param-desc">Overwrite if target exists.</span>
+                    <div class="param-default">Default: <code>false</code></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="schema-section">
+            <h3 class="schema-title output">Output Schema</h3>
+            <div class="output-structure">
+<pre>{
+  <span class="key">"success"</span>: <span class="type">boolean</span>,
+  <span class="key">"operation"</span>: <span class="type">string</span>,
+  <span class="key">"path"</span>: <span class="type">string</span>,
+  <span class="key">"target?"</span>: <span class="type">string</span>,
+  <span class="key">"stat?"</span>: {               <span class="comment">// for stat operation</span>
+    <span class="key">"size"</span>: <span class="type">number</span>,
+    <span class="key">"modified"</span>: <span class="type">string</span>,    <span class="comment">// ISO date</span>
+    <span class="key">"created"</span>: <span class="type">string</span>,     <span class="comment">// ISO date</span>
+    <span class="key">"isDirectory"</span>: <span class="type">boolean</span>
+  },
+  <span class="key">"error?"</span>: { <span class="key">code</span>, <span class="key">message</span> },
+  <span class="key">"hint"</span>: <span class="type">string</span>
+}</pre>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <footer>
+      <p>Files MCP • Sandboxed Filesystem Tools for AI Assistants</p>
+      <p style="margin-top: 0.5rem;">Built with TypeScript • <a href="https://modelcontextprotocol.io">MCP Protocol</a></p>
+    </footer>
+  </div>
+</body>
+</html>

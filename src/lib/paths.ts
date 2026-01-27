@@ -58,13 +58,13 @@ export function resolvePath(virtualPath: string): PathResolutionResult {
   // Check for absolute paths (not allowed - this is a sandboxed filesystem)
   if (isAbsolutePath(trimmed)) {
     const mounts = config.MOUNTS.map((m) => m.name).join(', ');
-    
+
     // Suggest the corrected path by stripping the leading slash
     const suggestedPath = trimmed.replace(/^\/+/, '');
-    const suggestion = suggestedPath 
+    const suggestion = suggestedPath
       ? `Try using "${suggestedPath}" instead (without the leading "/").`
       : `Use fs_read(".") to explore available mounts.`;
-    
+
     return {
       ok: false,
       error:

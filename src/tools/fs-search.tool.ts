@@ -14,15 +14,15 @@ import {
   findMatches,
   getMounts,
   isTextFile,
+  type MatchResult,
   matchesGlob,
   matchesType,
+  type PatternMode,
   resolvePath as resolveVirtualPath,
   searchFiles,
   shouldExclude,
   UnsafeRegexError,
   validatePathChain,
-  type MatchResult,
-  type PatternMode,
 } from '../lib/index.js';
 import type { HandlerExtra } from '../types/index.js';
 
@@ -51,6 +51,14 @@ export const fsSearchInputSchema = z
       .default('all')
       .describe('What to search. Default "all" (filename + content).'),
 
+    preview: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        'If true, return lightweight results (per-file match counts only) without context lines.',
+      ),
+
     patternMode: z
       .enum(['literal', 'regex', 'fuzzy'])
       .optional()
@@ -64,7 +72,9 @@ export const fsSearchInputSchema = z
       .boolean()
       .optional()
       .default(false)
-      .describe('Ignore case in content search (filename search is always case-insensitive). Default false.'),
+      .describe(
+        'Ignore case in content search (filename search is always case-insensitive). Default false.',
+      ),
 
     wholeWord: z
       .boolean()
@@ -106,7 +116,26 @@ export const fsSearchInputSchema = z
       .max(1000)
       .optional()
       .default(100)
-      .describe('Limit results (default 100).'),
+      .describe(
+        'Search cap for matches (default 100). Increase this if you need to page deeper results.',
+      ),
+
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .optional()
+      .default(50)
+      .describe('Max results returned per section (default 50).'),
+
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .default(0)
+      .describe('Skip the first N results per section (default 0).'),
 
     context: z
       .number()
@@ -151,7 +180,21 @@ interface ContentMatch {
 
 interface ContentFileResult {
   path: string;
-  matches: ContentMatch[];
+  matches?: ContentMatch[];
+  matchCount?: number;
+}
+
+interface ResultPageInfo {
+  returned: number;
+  total: number;
+  hasMore: boolean;
+}
+
+interface SearchPageInfo {
+  limit: number;
+  offset: number;
+  byFilename: ResultPageInfo;
+  byContent: ResultPageInfo;
 }
 
 interface FsSearchResult {
@@ -167,6 +210,7 @@ interface FsSearchResult {
     contentMatches: number;
     filesSearched: number;
   };
+  page?: SearchPageInfo;
   truncated: boolean;
   error?: {
     code: string;
@@ -191,7 +235,11 @@ function formatLineWithNumber(lineNum: number, text: string, maxLineNum: number)
   return `${String(lineNum).padStart(padding)}|${text}`;
 }
 
-function buildClusterResult(matches: MatchResult[], content: string, contextLines: number): ContentMatch {
+function buildClusterResult(
+  matches: MatchResult[],
+  content: string,
+  contextLines: number,
+): ContentMatch {
   const lines = content.split('\n');
   const firstMatch = matches.at(0);
   const lastMatch = matches.at(-1);
@@ -256,7 +304,11 @@ function buildClusterResult(matches: MatchResult[], content: string, contextLine
   };
 }
 
-function clusterMatches(matches: MatchResult[], content: string, contextLines: number): ContentMatch[] {
+function clusterMatches(
+  matches: MatchResult[],
+  content: string,
+  contextLines: number,
+): ContentMatch[] {
   if (matches.length === 0) return [];
 
   const sorted = [...matches].sort((a, b) => a.line - b.line);
@@ -290,10 +342,13 @@ function joinVirtualPath(base: string, relative: string): string {
   return path.join(base, relative);
 }
 
-function matchFilename(query: string, filename: string): { score: number; matchIndices: number[] } | null {
+function matchFilename(
+  query: string,
+  filename: string,
+): { score: number; matchIndices: number[] } | null {
   const result = fuzzysort.single(query.toLowerCase(), filename.toLowerCase());
   if (!result) return null;
-  return { score: result.score, matchIndices: result.indexes ?? [] };
+  return { score: result.score, matchIndices: result.indexes ? [...result.indexes] : [] };
 }
 
 async function searchContentInFile(
@@ -352,13 +407,14 @@ async function searchContentInDirectory(
     exclude?: string[];
     respectIgnore: boolean;
     maxResults: number;
-    remainingClusters: number;
+    remainingResults: number;
+    preview: boolean;
   },
 ): Promise<{
   results: ContentFileResult[];
   filesSearched: number;
   matchCount: number;
-  remainingClusters: number;
+  remainingResults: number;
   truncated: boolean;
   error?: string;
 }> {
@@ -422,7 +478,8 @@ async function searchContentInDirectory(
   let filesSearched = 0;
   let matchCount = 0;
   let truncated = truncatedCollection;
-  let remainingClusters = options.remainingClusters;
+  let remainingResults = options.remainingResults;
+  const isPreview = options.preview;
 
   // Process files in batches with concurrency
   const processFile = async (file: FileToSearch): Promise<ContentFileResult | null> => {
@@ -437,7 +494,18 @@ async function searchContentInDirectory(
         maxResults: options.maxResults,
       });
 
-      if (searchResult.error || searchResult.clusters.length === 0) {
+      if (searchResult.error || searchResult.matchCount === 0) {
+        return null;
+      }
+
+      if (isPreview) {
+        return {
+          path: joinVirtualPath(virtualPath, file.relPath),
+          matchCount: searchResult.matchCount,
+        };
+      }
+
+      if (searchResult.clusters.length === 0) {
         return null;
       }
 
@@ -451,21 +519,34 @@ async function searchContentInDirectory(
   };
 
   // Process in concurrent batches
-  for (let i = 0; i < filesToSearch.length && remainingClusters > 0; i += SEARCH_CONCURRENCY) {
+  for (let i = 0; i < filesToSearch.length && remainingResults > 0; i += SEARCH_CONCURRENCY) {
     const batch = filesToSearch.slice(i, i + SEARCH_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(processFile));
 
     for (const result of batchResults) {
       filesSearched++;
 
-      if (result && result.matches.length > 0) {
+      if (!result) continue;
+
+      if (isPreview) {
+        matchCount += result.matchCount ?? 0;
+        results.push(result);
+        remainingResults -= 1;
+        if (remainingResults <= 0) {
+          truncated = true;
+          break;
+        }
+        continue;
+      }
+
+      if (result.matches && result.matches.length > 0) {
         let fileClusters = result.matches;
-        if (fileClusters.length > remainingClusters) {
-          fileClusters = fileClusters.slice(0, remainingClusters);
+        if (fileClusters.length > remainingResults) {
+          fileClusters = fileClusters.slice(0, remainingResults);
           truncated = true;
         }
 
-        remainingClusters -= fileClusters.length;
+        remainingResults -= fileClusters.length;
         matchCount += fileClusters.reduce((sum, cluster) => sum + cluster.matchCount, 0);
 
         results.push({
@@ -473,7 +554,7 @@ async function searchContentInDirectory(
           matches: fileClusters,
         });
 
-        if (remainingClusters <= 0) {
+        if (remainingResults <= 0) {
           truncated = true;
           break;
         }
@@ -485,7 +566,7 @@ async function searchContentInDirectory(
     results,
     filesSearched,
     matchCount,
-    remainingClusters,
+    remainingResults,
     truncated,
   };
 }
@@ -506,6 +587,12 @@ PATTERN MODES (for content search):
 - fuzzy: Flexible whitespace. "hello  world" matches "hello world"
 
 ⚠️ FOR OR SEARCHES: Use patternMode="regex" with "term1|term2"
+
+PAGINATION:
+Use limit/offset to page filename/content results.
+
+PREVIEW:
+Set preview=true to return per-file match counts without context lines.
 
 WORKFLOW:
 1. fs_search to locate files/content
@@ -536,6 +623,11 @@ EXAMPLES:
     const input = parsed.data;
     const target = input.target ?? 'all';
     const depth = input.depth ?? 5;
+    const limit = input.limit ?? 50;
+    const offset = input.offset ?? 0;
+    const preview = input.preview ?? false;
+    let filenameTruncated = false;
+    let contentTruncated = false;
 
     // Early validation: check regex safety for content search
     if ((target === 'all' || target === 'content') && input.patternMode === 'regex') {
@@ -586,7 +678,11 @@ EXAMPLES:
           });
 
           for (const item of found) {
-            if (input.types && input.types.length > 0 && !matchesType(item.relativePath, input.types)) {
+            if (
+              input.types &&
+              input.types.length > 0 &&
+              !matchesType(item.relativePath, input.types)
+            ) {
               continue;
             }
             if (input.glob && !matchesGlob(item.relativePath, input.glob)) {
@@ -603,20 +699,20 @@ EXAMPLES:
 
         allFileMatches.sort((a, b) => b.score - a.score);
         if (allFileMatches.length > input.maxResults) {
-          results.truncated = true;
+          filenameTruncated = true;
         }
         results.results.byFilename = allFileMatches.slice(0, input.maxResults);
       }
 
       // Content search across mounts
       if (target === 'all' || target === 'content') {
-        let remainingClusters = input.maxResults;
+        let remainingResults = input.maxResults;
         let totalFilesSearched = 0;
         let totalContentMatches = 0;
 
         for (const mount of mounts) {
-          if (remainingClusters <= 0) {
-            results.truncated = true;
+          if (remainingResults <= 0) {
+            contentTruncated = true;
             break;
           }
 
@@ -633,15 +729,16 @@ EXAMPLES:
             exclude: input.exclude,
             respectIgnore: input.respectIgnore,
             maxResults: input.maxResults,
-            remainingClusters,
+            remainingResults,
+            preview,
           });
 
           results.results.byContent.push(...contentResult.results);
           totalFilesSearched += contentResult.filesSearched;
           totalContentMatches += contentResult.matchCount;
-          remainingClusters = contentResult.remainingClusters;
+          remainingResults = contentResult.remainingResults;
           if (contentResult.truncated) {
-            results.truncated = true;
+            contentTruncated = true;
             break;
           }
         }
@@ -650,10 +747,15 @@ EXAMPLES:
         results.stats.contentMatches = totalContentMatches;
       }
 
-      results.stats.filenameMatches = results.results.byFilename.length;
-      results.hint = buildSearchHint(results);
+      const finalized = finalizeSearchResults({
+        result: results,
+        limit,
+        offset,
+        filenameTruncated,
+        contentTruncated,
+      });
 
-      return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(finalized, null, 2) }] };
     }
 
     // Resolve virtual path to real path
@@ -728,7 +830,11 @@ EXAMPLES:
 
         const filtered = found
           .filter((item) => {
-            if (input.types && input.types.length > 0 && !matchesType(item.relativePath, input.types)) {
+            if (
+              input.types &&
+              input.types.length > 0 &&
+              !matchesType(item.relativePath, input.types)
+            ) {
               return false;
             }
             if (input.glob && !matchesGlob(item.relativePath, input.glob)) {
@@ -743,7 +849,7 @@ EXAMPLES:
           }));
 
         if (filtered.length >= input.maxResults) {
-          results.truncated = true;
+          filenameTruncated = true;
         }
 
         results.results.byFilename = filtered.slice(0, input.maxResults);
@@ -784,14 +890,15 @@ EXAMPLES:
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
           maxResults: input.maxResults,
-          remainingClusters: input.maxResults,
+          remainingResults: input.maxResults,
+          preview,
         });
 
         results.results.byContent = contentResult.results;
         results.stats.filesSearched = contentResult.filesSearched;
         results.stats.contentMatches = contentResult.matchCount;
         if (contentResult.truncated) {
-          results.truncated = true;
+          contentTruncated = true;
         }
       } else if (stat.isFile()) {
         if (!isTextFile(absolutePath)) {
@@ -801,13 +908,17 @@ EXAMPLES:
           return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
         }
 
-        if (input.types && input.types.length > 0 && !matchesType(path.basename(virtualPath), input.types)) {
+        if (
+          input.types &&
+          input.types.length > 0 &&
+          !matchesType(path.basename(virtualPath), input.types)
+        ) {
           // skip
         } else if (input.glob && !matchesGlob(virtualPath, input.glob)) {
           // skip
         } else {
           const content = await fs.readFile(absolutePath, 'utf8');
-          const { clusters } = await searchContentInFile(content, input.query, {
+          const { clusters, matchCount } = await searchContentInFile(content, input.query, {
             patternMode: input.patternMode as PatternMode,
             multiline: input.multiline,
             wholeWord: input.wholeWord,
@@ -816,40 +927,113 @@ EXAMPLES:
             maxResults: input.maxResults,
           });
 
-          let fileClusters = clusters;
-          if (clusters.length > input.maxResults) {
-            fileClusters = clusters.slice(0, input.maxResults);
-            results.truncated = true;
+          if (preview) {
+            results.results.byContent =
+              matchCount > 0
+                ? [
+                    {
+                      path: virtualPath,
+                      matchCount,
+                    },
+                  ]
+                : [];
+            results.stats.filesSearched = 1;
+            results.stats.contentMatches = matchCount;
+          } else {
+            let fileClusters = clusters;
+            if (clusters.length > input.maxResults) {
+              fileClusters = clusters.slice(0, input.maxResults);
+              contentTruncated = true;
+            }
+
+            const trimmedMatchCount = fileClusters.reduce(
+              (sum, cluster) => sum + cluster.matchCount,
+              0,
+            );
+
+            results.results.byContent =
+              fileClusters.length > 0
+                ? [
+                    {
+                      path: virtualPath,
+                      matches: fileClusters,
+                    },
+                  ]
+                : [];
+            results.stats.filesSearched = 1;
+            results.stats.contentMatches = trimmedMatchCount;
           }
-
-          const trimmedMatchCount = fileClusters.reduce((sum, cluster) => sum + cluster.matchCount, 0);
-
-          results.results.byContent =
-            fileClusters.length > 0
-              ? [
-                  {
-                    path: virtualPath,
-                    matches: fileClusters,
-                  },
-                ]
-              : [];
-          results.stats.filesSearched = 1;
-          results.stats.contentMatches = trimmedMatchCount;
         }
       }
     }
 
-    results.stats.filenameMatches = results.results.byFilename.length;
-    results.hint = buildSearchHint(results);
+    const finalized = finalizeSearchResults({
+      result: results,
+      limit,
+      offset,
+      filenameTruncated,
+      contentTruncated,
+    });
 
-    return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(finalized, null, 2) }] };
   },
 };
 
+function paginateList<T>(
+  items: T[],
+  limit: number,
+  offset: number,
+): ResultPageInfo & { items: T[] } {
+  const safeOffset = Math.max(0, offset);
+  const safeLimit = Math.max(1, limit);
+  const total = items.length;
+  const pagedItems = items.slice(safeOffset, safeOffset + safeLimit);
+  return {
+    items: pagedItems,
+    returned: pagedItems.length,
+    total,
+    hasMore: total > safeOffset + pagedItems.length,
+  };
+}
+
+function finalizeSearchResults(options: {
+  result: FsSearchResult;
+  limit: number;
+  offset: number;
+  filenameTruncated: boolean;
+  contentTruncated: boolean;
+}): FsSearchResult {
+  const { result, limit, offset, filenameTruncated, contentTruncated } = options;
+  const filenamePage = paginateList(result.results.byFilename, limit, offset);
+  const contentPage = paginateList(result.results.byContent, limit, offset);
+
+  result.results.byFilename = filenamePage.items;
+  result.results.byContent = contentPage.items;
+  result.page = {
+    limit,
+    offset,
+    byFilename: {
+      returned: filenamePage.returned,
+      total: filenamePage.total,
+      hasMore: filenamePage.hasMore || filenameTruncated,
+    },
+    byContent: {
+      returned: contentPage.returned,
+      total: contentPage.total,
+      hasMore: contentPage.hasMore || contentTruncated,
+    },
+  };
+  result.stats.filenameMatches = filenamePage.total;
+  result.truncated = filenameTruncated || contentTruncated;
+  result.hint = buildSearchHint(result);
+  return result;
+}
+
 function buildSearchHint(result: FsSearchResult): string {
-  const filenameMatches = result.results.byFilename.length;
-  const contentFileCount = result.results.byContent.length;
+  const filenameMatches = result.page?.byFilename.total ?? result.results.byFilename.length;
+  const contentFileCount = result.page?.byContent.total ?? result.results.byContent.length;
   const contentMatches = result.stats.contentMatches;
+  const pageInfo = result.page;
 
   let hint = '';
   if (result.target === 'filename') {
@@ -870,8 +1054,13 @@ function buildSearchHint(result: FsSearchResult): string {
     hint = `Found ${filenameHint} and ${contentHint}.`;
   }
 
+  if (pageInfo && (pageInfo.byFilename.hasMore || pageInfo.byContent.hasMore)) {
+    hint += ` Showing ${pageInfo.byFilename.returned}/${filenameMatches} filename match(es) and ${pageInfo.byContent.returned}/${contentFileCount} file match(es). Use limit/offset to paginate.`;
+  }
+
   if (result.truncated) {
-    hint += ' Results truncated — narrow your search for complete results.';
+    hint +=
+      ' Results truncated — narrow the path, add types/glob filters, or use preview=true for lighter output.';
   }
 
   return hint;

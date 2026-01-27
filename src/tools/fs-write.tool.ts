@@ -97,6 +97,14 @@ export const fsWriteInputSchema = z
       .optional()
       .default(true)
       .describe('For create: whether to create parent directories if missing. Default true.'),
+
+    ensureTrailingNewline: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        'Ensure file ends with a newline after write. Default true (POSIX convention, reduces git noise).',
+      ),
   })
   .passthrough() // Allow extra keys from SDK context
   .refine(
@@ -132,7 +140,11 @@ export const fsWriteInputSchema = z
   )
   .refine(
     (data) => {
-      if (data.operation === 'update' && data.action !== 'delete_lines' && data.content === undefined) {
+      if (
+        data.operation === 'update' &&
+        data.action !== 'delete_lines' &&
+        data.content === undefined
+      ) {
         return false;
       }
       return true;
@@ -178,6 +190,11 @@ async function fileExists(absPath: string): Promise<boolean> {
   }
 }
 
+function withTrailingNewline(content: string, ensure: boolean): string {
+  if (!ensure) return content;
+  return content.endsWith('\n') ? content : `${content}\n`;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Operations
 // ─────────────────────────────────────────────────────────────
@@ -186,7 +203,7 @@ async function createFile(
   absPath: string,
   relativePath: string,
   content: string,
-  options: { createDirs: boolean; dryRun: boolean },
+  options: { createDirs: boolean; dryRun: boolean; ensureTrailingNewline: boolean },
 ): Promise<FsWriteResult> {
   // Check if exists
   if (await fileExists(absPath)) {
@@ -204,8 +221,11 @@ async function createFile(
     };
   }
 
+  // Normalize trailing newline
+  const finalContent = withTrailingNewline(content, options.ensureTrailingNewline);
+
   if (options.dryRun) {
-    const diff = generateDiff('', content, relativePath);
+    const diff = generateDiff('', finalContent, relativePath);
     return {
       success: true,
       path: relativePath,
@@ -213,7 +233,7 @@ async function createFile(
       applied: false,
       result: {
         action: 'would_create',
-        linesAffected: content.split('\n').length,
+        linesAffected: finalContent.split('\n').length,
         diff,
       },
       hint: 'DRY RUN — file would be created with the content shown. Run with dryRun=false to apply.',
@@ -225,8 +245,8 @@ async function createFile(
     await fs.mkdir(path.dirname(absPath), { recursive: true });
   }
 
-  await fs.writeFile(absPath, content, 'utf8');
-  const newChecksum = generateChecksum(content);
+  await fs.writeFile(absPath, finalContent, 'utf8');
+  const newChecksum = generateChecksum(finalContent);
 
   return {
     success: true,
@@ -235,7 +255,7 @@ async function createFile(
     applied: true,
     result: {
       action: 'created',
-      linesAffected: content.split('\n').length,
+      linesAffected: finalContent.split('\n').length,
       newChecksum,
     },
     hint: `File created successfully. New checksum: ${newChecksum}. Use fs_read to verify the content.`,
@@ -393,8 +413,11 @@ async function updateFile(
       };
   }
 
+  // Normalize trailing newline
+  const finalContent = withTrailingNewline(newContent, input.ensureTrailingNewline);
+
   // Generate diff
-  const diff = generateDiff(currentContent, newContent, relativePath);
+  const diff = generateDiff(currentContent, finalContent, relativePath);
 
   if (input.dryRun) {
     return {
@@ -412,8 +435,8 @@ async function updateFile(
   }
 
   // Apply changes
-  await fs.writeFile(absPath, newContent, 'utf8');
-  const newChecksum = generateChecksum(newContent);
+  await fs.writeFile(absPath, finalContent, 'utf8');
+  const newChecksum = generateChecksum(finalContent);
 
   return {
     success: true,
@@ -547,6 +570,7 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
         result = await createFile(absolutePath, virtualPath, input.content ?? '', {
           createDirs: input.createDirs,
           dryRun: input.dryRun,
+          ensureTrailingNewline: input.ensureTrailingNewline,
         });
         break;
 

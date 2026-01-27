@@ -350,7 +350,10 @@ DELETE IS PERMANENT — use with caution, especially with recursive=true`,
               success: false,
               operation: input.operation,
               path: virtualSource,
-              error: { code: 'DIRECTORY_NOT_EMPTY', message: 'Directory delete requires recursive=true' },
+              error: {
+                code: 'DIRECTORY_NOT_EMPTY',
+                message: 'Directory delete requires recursive=true',
+              },
               hint: 'Set recursive=true to delete directories and their contents.',
             };
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -414,7 +417,10 @@ DELETE IS PERMANENT — use with caution, especially with recursive=true`,
               operation: input.operation,
               path: virtualSource,
               target: virtualTarget,
-              error: { code: 'DIRECTORY_NOT_EMPTY', message: 'Directory operation requires recursive=true' },
+              error: {
+                code: 'DIRECTORY_NOT_EMPTY',
+                message: 'Directory operation requires recursive=true',
+              },
               hint: 'Set recursive=true to move/copy directories and their contents.',
             };
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -466,7 +472,10 @@ DELETE IS PERMANENT — use with caution, especially with recursive=true`,
             operation: input.operation,
             path: virtualSource,
             target: virtualTarget,
-            hint: input.operation === 'rename' ? 'Rename completed successfully.' : 'Move completed successfully.',
+            hint:
+              input.operation === 'rename'
+                ? 'Rename completed successfully.'
+                : 'Move completed successfully.',
           };
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }

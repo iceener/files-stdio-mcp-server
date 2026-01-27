@@ -39,6 +39,34 @@ export const fsReadInputSchema = z
           'For directories: returns entries. For files: returns content with line numbers.',
       ),
 
+    mode: z
+      .enum(['auto', 'tree', 'list', 'content'])
+      .optional()
+      .default('auto')
+      .describe(
+        'Exploration mode: "auto" (default) detects file vs directory, ' +
+          '"tree" returns directories only with child counts, ' +
+          '"list" returns files + directories (paginated), ' +
+          '"content" reads file content.',
+      ),
+
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(2000)
+      .optional()
+      .default(100)
+      .describe('Max entries to return for directory listings (default 100).'),
+
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .default(0)
+      .describe('Skip the first N matching entries for directory listings (default 0).'),
+
     lines: z
       .string()
       .optional()
@@ -93,12 +121,23 @@ export type FsReadInput = z.infer<typeof fsReadInputSchema>;
 // Types
 // ─────────────────────────────────────────────────────────────
 
+type FsReadMode = 'auto' | 'tree' | 'list' | 'content';
+
 interface TreeEntry {
   path: string;
   kind: 'file' | 'directory';
   size?: string;
   modified?: string;
   children?: number;
+}
+
+interface DirectoryStats {
+  returned: number;
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  truncated: boolean;
 }
 
 interface FsReadResult {
@@ -108,6 +147,7 @@ interface FsReadResult {
   // For directories:
   entries?: TreeEntry[];
   summary?: string;
+  stats?: DirectoryStats;
   // For files:
   content?: {
     text: string;
@@ -155,12 +195,29 @@ function isRootPath(pathStr: string): boolean {
   return trimmed === '.' || trimmed === '' || trimmed === '/';
 }
 
+function resolveMode(requestedMode: FsReadMode, isFile: boolean): FsReadMode {
+  if (requestedMode === 'auto') {
+    return isFile ? 'content' : 'list';
+  }
+  return requestedMode;
+}
+
+function getListingFlags(mode: FsReadMode): { includeFiles: boolean; includeDirs: boolean } {
+  if (mode === 'tree') {
+    return { includeFiles: false, includeDirs: true };
+  }
+  return { includeFiles: true, includeDirs: true };
+}
+
 /**
  * List all available mount points, or directly show single mount contents.
  */
 async function listMountsOrSingleMount(
   depth: number,
   options: {
+    mode: FsReadMode;
+    limit: number;
+    offset: number;
     types?: string[];
     glob?: string;
     exclude?: string[];
@@ -176,21 +233,38 @@ async function listMountsOrSingleMount(
     if (!mount) {
       throw new Error('Unexpected: mounts array is empty after length check');
     }
-    const { entries, truncated } = await listDirectory(mount.absolutePath, '', depth, options);
+    const listingMode = options.mode === 'auto' ? 'list' : options.mode;
+    const { includeFiles, includeDirs } = getListingFlags(listingMode);
+    const { entries, stats } = await listDirectory(mount.absolutePath, '', depth, {
+      types: options.types,
+      glob: options.glob,
+      exclude: options.exclude,
+      respectIgnore: options.respectIgnore,
+      details: options.details,
+      includeFiles,
+      includeDirs,
+      limit: options.limit,
+      offset: options.offset,
+    });
 
     const fileCount = entries.filter((e) => e.kind === 'file').length;
     const dirCount = entries.filter((e) => e.kind === 'directory').length;
+    const pagingSuffix = stats.hasMore ? ` — showing ${stats.returned} of ${stats.total}` : '';
+    const truncatedSuffix = stats.truncated ? ' — truncated' : '';
 
     return {
       success: true,
       path: '.',
       type: 'directory',
       entries,
-      summary: `${entries.length} items (${fileCount} files, ${dirCount} directories)${truncated ? ' — truncated' : ''}`,
+      summary: `${entries.length} items (${fileCount} files, ${dirCount} directories)${pagingSuffix}${truncatedSuffix}`,
+      stats,
       hint:
         entries.length === 0
           ? 'Directory is empty or all files are ignored.'
-          : `Showing contents of "${mount.name}". Use fs_read on any path to explore deeper or fs_search to locate files/content.`,
+          : stats.hasMore
+            ? `Showing contents of "${mount.name}". Use limit/offset to paginate, or mode="tree" for a lightweight structure view.`
+            : `Showing contents of "${mount.name}". Use fs_read on any path to explore deeper or fs_search to locate files/content.`,
     };
   }
 
@@ -228,14 +302,29 @@ async function listMountsOrSingleMount(
   }
 
   const mountNames = mounts.map((m) => m.name).join(', ');
+  const total = entries.length;
+  const start = Math.max(0, options.offset);
+  const end = start + Math.max(1, options.limit);
+  const pagedEntries = entries.slice(start, end);
+  const stats: DirectoryStats = {
+    returned: pagedEntries.length,
+    total,
+    offset: start,
+    limit: Math.max(1, options.limit),
+    hasMore: total > start + pagedEntries.length,
+    truncated: false,
+  };
 
   return {
     success: true,
     path: '.',
     type: 'directory',
-    entries,
+    entries: pagedEntries,
     summary: `${mounts.length} mount point(s): ${mountNames}`,
-    hint: `${mounts.length} mounts available. Use fs_read("mountname/") to explore a specific mount, or fs_search to locate files/content.`,
+    stats,
+    hint: stats.hasMore
+      ? `${mounts.length} mounts available. Use limit/offset to paginate, or fs_read("mountname/") to explore a specific mount.`
+      : `${mounts.length} mounts available. Use fs_read("mountname/") to explore a specific mount, or fs_search to locate files/content.`,
   };
 }
 
@@ -256,16 +345,31 @@ async function listDirectory(
     exclude?: string[];
     respectIgnore: boolean;
     details?: boolean;
+    includeFiles: boolean;
+    includeDirs: boolean;
+    limit: number;
+    offset: number;
   },
-): Promise<{ entries: TreeEntry[]; truncated: boolean }> {
+): Promise<{ entries: TreeEntry[]; stats: DirectoryStats }> {
   const entries: TreeEntry[] = [];
   let truncated = false;
+  let total = 0;
+  const limit = Math.max(1, options.limit);
+  const offset = Math.max(0, options.offset);
 
   const ignoreMatcher = options.respectIgnore ? await createIgnoreMatcherForDir(absPath) : null;
 
+  function recordEntry(entry: TreeEntry): void {
+    total += 1;
+    if (total <= offset) return;
+    if (entries.length < limit) {
+      entries.push(entry);
+    }
+  }
+
   async function walk(dir: string, relDir: string, currentDepth: number): Promise<void> {
-    if (currentDepth > depth || entries.length >= MAX_ENTRIES) {
-      truncated = entries.length >= MAX_ENTRIES;
+    if (currentDepth > depth || total >= MAX_ENTRIES) {
+      truncated = total >= MAX_ENTRIES;
       return;
     }
 
@@ -277,7 +381,7 @@ async function listDirectory(
     }
 
     for (const item of items) {
-      if (entries.length >= MAX_ENTRIES) {
+      if (total >= MAX_ENTRIES) {
         truncated = true;
         break;
       }
@@ -302,7 +406,8 @@ async function listDirectory(
             // Can't read
           }
 
-          const includeDir = !options.glob || matchesGlob(itemRelPath, options.glob);
+          const includeDir =
+            (!options.glob || matchesGlob(itemRelPath, options.glob)) && options.includeDirs;
           if (includeDir) {
             const entry: TreeEntry = {
               path: itemRelPath,
@@ -312,13 +417,14 @@ async function listDirectory(
             if (options.details) {
               entry.modified = formatRelativeTime(stat.mtime);
             }
-            entries.push(entry);
+            recordEntry(entry);
           }
 
           if (currentDepth < depth) {
             await walk(itemPath, itemRelPath, currentDepth + 1);
           }
         } else if (stat.isFile()) {
+          if (!options.includeFiles) continue;
           // Type filter
           if (options.types && options.types.length > 0) {
             if (!matchesType(item, options.types)) continue;
@@ -334,7 +440,7 @@ async function listDirectory(
             entry.size = formatSize(stat.size);
             entry.modified = formatRelativeTime(stat.mtime);
           }
-          entries.push(entry);
+          recordEntry(entry);
         }
       } catch {
         // Skip inaccessible items
@@ -343,7 +449,15 @@ async function listDirectory(
   }
 
   await walk(absPath, relativePath === '.' ? '' : relativePath, 1);
-  return { entries, truncated };
+  const stats: DirectoryStats = {
+    returned: entries.length,
+    total,
+    offset,
+    limit,
+    hasMore: truncated || total > offset + entries.length,
+    truncated,
+  };
+  return { entries, stats };
 }
 
 async function readFile(
@@ -361,7 +475,10 @@ async function readFile(
         success: false,
         path: relativePath,
         type: 'file',
-        error: { code: 'FILE_TOO_LARGE', message: `File size (${sizeMB}MB) exceeds limit (${limitMB}MB)` },
+        error: {
+          code: 'FILE_TOO_LARGE',
+          message: `File size (${sizeMB}MB) exceeds limit (${limitMB}MB)`,
+        },
         hint: `This file is too large to read. Use fs_search to find specific content, or use lines="1-100" to read portions.`,
       };
     }
@@ -473,15 +590,14 @@ Always start with fs_read(".") to see available mounts.
 ALWAYS read a file BEFORE answering questions about its content.
 ALWAYS read a file BEFORE modifying it (you need the checksum).
 
-MODES (automatically detected):
+MODES:
+- auto (default): detects file vs directory
+- tree: directories only with child counts (lightweight structure)
+- list: files + directories (paginated with limit/offset)
+- content: read file content with line numbers
 
-1. DIRECTORY EXPLORATION — path to directory
-   Returns: Entry list with optional sizes and modification times.
-   Use to: Understand layout, plan navigation.
-
-2. FILE READING — path to file
-   Returns: Content with LINE NUMBERS and CHECKSUM.
-   Use to: See exact content before editing, get line numbers for precise edits.
+PAGINATION:
+Use limit/offset to control directory listing size and fetch next pages.
 
 AUTO-RESOLVE: If you request a file path that doesn't exist but the filename is unique,
    the tool will automatically resolve it and read the correct file.
@@ -510,11 +626,27 @@ TIPS:
     }
 
     const input = parsed.data;
+    const requestedMode = input.mode ?? 'auto';
     const effectiveDepth = input.depth ?? 1;
+    const limit = input.limit ?? 100;
+    const offset = input.offset ?? 0;
 
     // Special case: root path shows mount listing (or single mount contents)
     if (isRootPath(input.path)) {
+      if (requestedMode === 'content') {
+        const result: FsReadResult = {
+          success: false,
+          path: input.path,
+          type: 'directory',
+          error: { code: 'MODE_MISMATCH', message: 'Root path is a directory' },
+          hint: 'Use mode="list" or mode="tree" for directory exploration.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
       const result = await listMountsOrSingleMount(effectiveDepth, {
+        mode: requestedMode,
+        limit,
+        offset,
         types: input.types,
         glob: input.glob,
         exclude: input.exclude,
@@ -591,6 +723,22 @@ TIPS:
           // Found unique match - read the resolved file instead
           const resolvedVirtualPath = `${mountName}/${autoResolve.resolvedPath}`;
           const resolvedAbsolutePath = path.join(mount.absolutePath, autoResolve.resolvedPath);
+          const autoMode = resolveMode(requestedMode, true);
+          if (autoMode !== 'content') {
+            const result: FsReadResult = {
+              success: false,
+              path: virtualPath,
+              type: 'file',
+              error: {
+                code: 'MODE_MISMATCH',
+                message: `Path "${virtualPath}" auto-resolved to file "${resolvedVirtualPath}"`,
+              },
+              hint:
+                'This path points to a file. Use mode="content" (or omit mode) to read it, ' +
+                'or use fs_read on a directory path for listing.',
+            };
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          }
 
           try {
             stat = await fs.stat(resolvedAbsolutePath);
@@ -615,10 +763,15 @@ TIPS:
             success: false,
             path: virtualPath,
             type: 'file',
-            error: { code: 'AMBIGUOUS_PATH', message: `Multiple files match "${path.basename(virtualPath)}"` },
+            error: {
+              code: 'AMBIGUOUS_PATH',
+              message: `Multiple files match "${path.basename(virtualPath)}"`,
+            },
             hint: `Found ${autoResolve.candidates.length} files with this name. Did you mean:\n${candidates
               .map((c) => `  • ${c}`)
-              .join('\n')}${autoResolve.candidates.length > 5 ? `\n  ... and ${autoResolve.candidates.length - 5} more` : ''}`,
+              .join(
+                '\n',
+              )}${autoResolve.candidates.length > 5 ? `\n  ... and ${autoResolve.candidates.length - 5} more` : ''}`,
           };
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
@@ -637,31 +790,66 @@ TIPS:
     let result: FsReadResult;
 
     if (stat.isDirectory()) {
-      // List directory
-      const { entries, truncated } = await listDirectory(absolutePath, virtualPath, effectiveDepth, {
+      const directoryMode = resolveMode(requestedMode, false);
+      if (directoryMode === 'content') {
+        result = {
+          success: false,
+          path: virtualPath,
+          type: 'directory',
+          error: {
+            code: 'MODE_MISMATCH',
+            message: 'Directory path cannot be read as file content',
+          },
+          hint: 'Use mode="list" or mode="tree" for directory exploration.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      const { includeFiles, includeDirs } = getListingFlags(directoryMode);
+      const { entries, stats } = await listDirectory(absolutePath, virtualPath, effectiveDepth, {
         types: input.types,
         glob: input.glob,
         exclude: input.exclude,
         respectIgnore: input.respectIgnore,
         details: input.details,
+        includeFiles,
+        includeDirs,
+        limit,
+        offset,
       });
 
       const fileCount = entries.filter((e) => e.kind === 'file').length;
       const dirCount = entries.filter((e) => e.kind === 'directory').length;
+      const pagingSuffix = stats.hasMore ? ` — showing ${stats.returned} of ${stats.total}` : '';
+      const truncatedSuffix = stats.truncated ? ' — truncated' : '';
 
       result = {
         success: true,
         path: input.path,
         type: 'directory',
         entries,
-        summary: `${entries.length} items (${fileCount} files, ${dirCount} directories)${truncated ? ' — truncated' : ''}`,
+        summary: `${entries.length} items (${fileCount} files, ${dirCount} directories)${pagingSuffix}${truncatedSuffix}`,
+        stats,
         hint:
           entries.length === 0
             ? 'Directory is empty or all files are ignored.'
-            : `Found ${entries.length} items. Use fs_read on a file path to see its content, or on a subdirectory to explore deeper.`,
+            : stats.hasMore
+              ? 'Results are paginated. Use limit/offset to continue, or mode="tree" for a lightweight structure view.'
+              : `Found ${entries.length} items. Use fs_read on a file path to see its content, or on a subdirectory to explore deeper.`,
       };
     } else if (stat.isFile()) {
-      result = await readFile(absolutePath, virtualPath, { lines: input.lines });
+      const fileMode = resolveMode(requestedMode, true);
+      if (fileMode !== 'content') {
+        result = {
+          success: false,
+          path: virtualPath,
+          type: 'file',
+          error: { code: 'MODE_MISMATCH', message: 'File path cannot be listed as a directory' },
+          hint: 'Use mode="content" (or omit mode) to read files.',
+        };
+      } else {
+        result = await readFile(absolutePath, virtualPath, { lines: input.lines });
+      }
     } else {
       result = {
         success: false,
