@@ -7,12 +7,24 @@ export const toolsMetadata = {
     name: 'fs_read',
     title: 'Filesystem Read',
     description:
-      'Explore directories, read files, find files by name, or search content. ' +
+      'Read files or list directories in the sandboxed filesystem. ' +
       'Returns line numbers and checksums needed for editing. ' +
-      'Supports preset patterns for Obsidian/Markdown (wikilinks, tags, tasks, headings). ' +
-      'IMPORTANT: For OR searches (term1 OR term2), use patternMode="regex" with pattern="term1|term2". ' +
-      'Default "literal" mode treats | as literal character, not OR operator.',
+      'Use fs_search to locate files or content.',
     readBeforeUse: false, // This IS the read tool
+    annotations: {
+      audience: ['agent'],
+      safe: true,
+      idempotent: true,
+    },
+  },
+
+  fs_search: {
+    name: 'fs_search',
+    title: 'Filesystem Search',
+    description:
+      'Find files by name and search content within files. ' +
+      'Supports literal, regex, and fuzzy content search with optional filters.',
+    readBeforeUse: false,
     annotations: {
       audience: ['agent'],
       safe: true,
@@ -24,13 +36,26 @@ export const toolsMetadata = {
     name: 'fs_write',
     title: 'Filesystem Write',
     description:
-      'Create, modify, or delete files in the sandboxed filesystem. ' +
+      'Create or update files in the sandboxed filesystem. ' +
       'IMPORTANT: Always call fs_read first to get the checksum. ' +
-      'Supports line-based and pattern-based targeting with dryRun preview.',
+      'Line-based targeting with dryRun preview.',
     readBeforeUse: true, // MUST read file before writing
     annotations: {
       audience: ['agent'],
       safe: false, // modifies state
+      idempotent: false,
+    },
+  },
+
+  fs_manage: {
+    name: 'fs_manage',
+    title: 'Filesystem Manage',
+    description:
+      'Structural operations for files and directories: delete, rename, move, copy, mkdir, stat.',
+    readBeforeUse: false,
+    annotations: {
+      audience: ['agent'],
+      safe: false,
       idempotent: false,
     },
   },

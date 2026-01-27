@@ -27,7 +27,7 @@ describe('fs_read: directory listing', () => {
 
     expect(result.success).toBe(true);
     expect(result.type).toBe('directory');
-    expect(result.tree).toBeDefined();
+    expect(result.entries).toBeDefined();
   });
 
   test('lists subdirectory', async () => {
@@ -35,15 +35,15 @@ describe('fs_read: directory listing', () => {
 
     expect(result.success).toBe(true);
     expect(result.type).toBe('directory');
-    expect((result.tree as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
+    expect((result.entries as unknown[]).length).toBeGreaterThan(0);
   });
 
   test('respects depth parameter', async () => {
     const shallow = await runFsRead({ path: 'vault', depth: 1 });
     const deep = await runFsRead({ path: 'vault', depth: 5 });
 
-    const shallowEntries = (shallow.tree as { entries: unknown[] }).entries;
-    const deepEntries = (deep.tree as { entries: unknown[] }).entries;
+    const shallowEntries = shallow.entries as unknown[];
+    const deepEntries = deep.entries as unknown[];
 
     // Deep should have more or equal entries
     expect(deepEntries.length).toBeGreaterThanOrEqual(shallowEntries.length);
@@ -92,130 +92,6 @@ describe('fs_read: file reading', () => {
   });
 });
 
-describe('fs_read: find files', () => {
-  test('finds file by exact name', async () => {
-    const result = await runFsRead({ path: 'vault', find: 'todo.md', depth: 10 });
-
-    expect(result.success).toBe(true);
-    const entries = (result.tree as { entries: { path: string }[] }).entries;
-    expect(entries.some((e) => e.path.endsWith('todo.md'))).toBe(true);
-  });
-
-  test('finds files by wildcard pattern', async () => {
-    const result = await runFsRead({ path: 'vault', find: '*.md', depth: 10 });
-
-    expect(result.success).toBe(true);
-    const entries = (result.tree as { entries: { path: string }[] }).entries;
-    expect(entries.every((e) => e.path.endsWith('.md'))).toBe(true);
-  });
-
-  test('returns empty for no matches', async () => {
-    const result = await runFsRead({ path: 'vault', find: 'nonexistent-file.xyz', depth: 10 });
-
-    expect(result.success).toBe(true);
-    const entries = (result.tree as { entries: unknown[] }).entries;
-    expect(entries.length).toBe(0);
-  });
-});
-
-describe('fs_read: content search', () => {
-  test('searches for literal pattern', async () => {
-    const result = await runFsRead({
-      path: 'vault',
-      pattern: 'keyword',
-      depth: 10,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.type).toBe('search');
-    expect((result.matches as unknown[]).length).toBeGreaterThan(0);
-  });
-
-  test('searches with regex pattern', async () => {
-    // Search for something we know exists in the fixtures
-    const result = await runFsRead({
-      path: 'vault',
-      pattern: 'line\\s+\\d+',
-      patternMode: 'regex',
-      depth: 10,
-    });
-
-    expect(result.success).toBe(true);
-    // Regex should find "line 2", "line 3" etc in journal files
-  });
-
-  test('returns context lines around matches', async () => {
-    const result = await runFsRead({
-      path: 'vault',
-      pattern: 'keyword',
-      context: 3,
-      depth: 10,
-    });
-
-    expect(result.success).toBe(true);
-    const matches = result.matches as { context: { before: string[]; after: string[] } }[];
-    if (matches.length > 0) {
-      expect(matches[0]?.context).toBeDefined();
-    }
-  });
-
-  test('respects output mode: summary', async () => {
-    const result = await runFsRead({
-      path: 'vault',
-      pattern: 'the',
-      output: 'summary',
-      depth: 10,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.stats).toBeDefined();
-  });
-
-  test('respects output mode: count', async () => {
-    const result = await runFsRead({
-      path: 'vault',
-      pattern: 'the',
-      output: 'count',
-      depth: 10,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.matchCount).toBeDefined();
-  });
-});
-
-describe('fs_read: pattern modes', () => {
-  test('literal mode escapes special characters', async () => {
-    // Create a file with special chars for this test
-    const testFile = path.join(FIXTURES_PATH, 'vault/test-special.md');
-    await fs.writeFile(testFile, 'Price: $100.00 (USD)');
-
-    try {
-      const result = await runFsRead({
-        path: 'vault/test-special.md',
-        pattern: '$100.00',
-        patternMode: 'literal',
-      });
-
-      expect(result.success).toBe(true);
-      expect((result.matches as unknown[]).length).toBe(1);
-    } finally {
-      await fs.unlink(testFile);
-    }
-  });
-
-  test('whole word matching', async () => {
-    const result = await runFsRead({
-      path: 'vault/programming/javascript.md',
-      pattern: 'const',
-      wholeWord: true,
-    });
-
-    expect(result.success).toBe(true);
-    // Should match "const" but not if it were part of another word
-  });
-});
-
 describe('fs_read: edge cases', () => {
   test('handles path outside allowed directory', async () => {
     const result = await runFsRead({ path: '../../../etc/passwd' });
@@ -231,7 +107,7 @@ describe('fs_read: edge cases', () => {
     try {
       const result = await runFsRead({ path: 'empty-test' });
       expect(result.success).toBe(true);
-      expect((result.tree as { entries: unknown[] }).entries.length).toBe(0);
+      expect((result.entries as unknown[]).length).toBe(0);
     } finally {
       await fs.rmdir(emptyDir);
     }
@@ -250,4 +126,3 @@ describe('fs_read: edge cases', () => {
     }
   });
 });
-

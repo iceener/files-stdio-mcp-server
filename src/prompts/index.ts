@@ -20,5 +20,5 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * }
  */
 export function registerPrompts(_server: McpServer): void {
-  // No prompts defined — fs_read and fs_write are self-explanatory
+  // No prompts defined — tools are self-explanatory (fs_read, fs_search, fs_write, fs_manage)
 }

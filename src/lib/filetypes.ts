@@ -3,6 +3,7 @@
  */
 
 import path from 'node:path';
+import picomatch from 'picomatch';
 
 /** Map of type aliases to extensions */
 const TYPE_MAP: Record<string, string[]> = {
@@ -183,17 +184,10 @@ export function matchesType(filepath: string, types: string[]): boolean {
 
 /**
  * Check if a path matches a glob pattern.
+ * Uses picomatch for full glob syntax support including negation, brace expansion, etc.
  */
 export function matchesGlob(filepath: string, pattern: string): boolean {
-  // Simple glob matching
-  const regex = pattern
-    .replace(/\./g, '\\.')
-    .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-    .replace(/\*/g, '[^/]*')
-    .replace(/<<<GLOBSTAR>>>/g, '.*')
-    .replace(/\?/g, '.');
-
-  return new RegExp(`^${regex}$`).test(filepath);
+  return picomatch.isMatch(filepath, pattern, { dot: true });
 }
 
 /**

@@ -9,11 +9,10 @@
  * - Match indices for UI highlighting
  */
 
-import fs from 'node:fs/promises';
 import path from 'node:path';
+import fg from 'fast-glob';
 import fuzzysort from 'fuzzysort';
-import { createIgnoreMatcherForDir } from './ignore.js';
-import { shouldExclude } from './filetypes.js';
+import { loadIgnorePatterns } from './ignore.js';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -236,84 +235,88 @@ class FileIndexManager {
 
   /** Build the file index for a directory */
   private async buildIndex(root: string, options: FileSearchOptions): Promise<FileIndex> {
-    const entries: IndexedFile[] = [];
     const maxDepth = options.maxDepth ?? 10;
     const includeHidden = options.includeHidden ?? false;
     const includeDirectories = options.includeDirectories ?? false;
     const respectIgnore = options.respectIgnore ?? true;
     const exclude = options.exclude ?? [];
 
-    const ignoreMatcher = respectIgnore ? await createIgnoreMatcherForDir(root) : null;
+    // Build ignore patterns for fast-glob
+    const ignorePatterns = [...ALWAYS_EXCLUDE.map((d) => `**/${d}/**`)];
 
-    const walk = async (dir: string, relDir: string, currentDepth: number): Promise<void> => {
-      if (currentDepth > maxDepth) return;
+    if (respectIgnore) {
+      const gitignorePatterns = await loadIgnorePatterns(root);
+      ignorePatterns.push(...gitignorePatterns);
+    }
 
-      let items: string[];
-      try {
-        items = await fs.readdir(dir);
-      } catch {
-        return;
-      }
+    if (exclude.length > 0) {
+      ignorePatterns.push(...exclude);
+    }
 
-      for (const item of items) {
-        // Skip hidden files if not included
-        if (!includeHidden && item.startsWith('.')) continue;
+    // Use fast-glob for efficient directory traversal
+    const globPattern = includeDirectories ? '**/*' : '**/*.*';
+    const paths = await fg(globPattern, {
+      cwd: root,
+      dot: includeHidden,
+      onlyFiles: !includeDirectories,
+      deep: maxDepth,
+      ignore: ignorePatterns,
+      suppressErrors: true,
+      followSymbolicLinks: false,
+    });
 
-        // Skip always-excluded directories
-        if (ALWAYS_EXCLUDE.includes(item)) continue;
+    // If including directories, also get directory entries
+    let dirPaths: string[] = [];
+    if (includeDirectories) {
+      dirPaths = await fg('**/*', {
+        cwd: root,
+        dot: includeHidden,
+        onlyDirectories: true,
+        deep: maxDepth,
+        ignore: ignorePatterns,
+        suppressErrors: true,
+        followSymbolicLinks: false,
+      });
+    }
 
-        const itemPath = path.join(dir, item);
-        const itemRelPath = relDir ? path.join(relDir, item).replace(/\\/g, '/') : item;
+    const entries: IndexedFile[] = [];
 
-        // Check ignore
-        if (ignoreMatcher?.isIgnored(itemRelPath)) continue;
-        if (exclude.length > 0 && shouldExclude(itemRelPath, exclude)) continue;
+    // Process file paths
+    for (const relativePath of paths) {
+      const fileName = path.basename(relativePath);
+      const extension = path.extname(fileName).slice(1).toLowerCase();
+      const depth = relativePath.split('/').length - 1;
 
-        try {
-          const stat = await fs.stat(itemPath);
+      entries.push({
+        relativePath,
+        fileName,
+        pathLower: relativePath.toLowerCase(),
+        nameLower: fileName.toLowerCase(),
+        depth,
+        extension,
+        isDirectory: false,
+        preparedName: fuzzysort.prepare(fileName.toLowerCase()),
+        preparedPath: fuzzysort.prepare(relativePath.toLowerCase()),
+      });
+    }
 
-          if (stat.isDirectory()) {
-            if (includeDirectories) {
-              const extension = '';
-              const depth = itemRelPath.split('/').length - 1;
+    // Process directory paths
+    for (const relativePath of dirPaths) {
+      const fileName = path.basename(relativePath);
+      const depth = relativePath.split('/').length - 1;
 
-              entries.push({
-                relativePath: itemRelPath,
-                fileName: item,
-                pathLower: itemRelPath.toLowerCase(),
-                nameLower: item.toLowerCase(),
-                depth,
-                extension,
-                isDirectory: true,
-                preparedName: fuzzysort.prepare(item.toLowerCase()),
-                preparedPath: fuzzysort.prepare(itemRelPath.toLowerCase()),
-              });
-            }
-
-            await walk(itemPath, itemRelPath, currentDepth + 1);
-          } else if (stat.isFile()) {
-            const extension = path.extname(item).slice(1).toLowerCase();
-            const depth = itemRelPath.split('/').length - 1;
-
-            entries.push({
-              relativePath: itemRelPath,
-              fileName: item,
-              pathLower: itemRelPath.toLowerCase(),
-              nameLower: item.toLowerCase(),
-              depth,
-              extension,
-              isDirectory: false,
-              preparedName: fuzzysort.prepare(item.toLowerCase()),
-              preparedPath: fuzzysort.prepare(itemRelPath.toLowerCase()),
-            });
-          }
-        } catch {
-          // Skip inaccessible items
-        }
-      }
-    };
-
-    await walk(root, '', 0);
+      entries.push({
+        relativePath,
+        fileName,
+        pathLower: relativePath.toLowerCase(),
+        nameLower: fileName.toLowerCase(),
+        depth,
+        extension: '',
+        isDirectory: true,
+        preparedName: fuzzysort.prepare(fileName.toLowerCase()),
+        preparedPath: fuzzysort.prepare(relativePath.toLowerCase()),
+      });
+    }
 
     return {
       root,
@@ -552,9 +555,7 @@ export async function tryAutoResolve(
 
   // Find all files with matching filename (case-insensitive)
   const fileNameLower = fileName.toLowerCase();
-  const matches = index.entries.filter(
-    (e) => !e.isDirectory && e.nameLower === fileNameLower,
-  );
+  const matches = index.entries.filter((e) => !e.isDirectory && e.nameLower === fileNameLower);
 
   if (matches.length === 0) {
     return { resolved: false, resolvedPath: null, candidates: [], ambiguous: false };

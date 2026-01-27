@@ -34,6 +34,8 @@ export {
   type ResolvedPath,
   resolvePath,
   toVirtualPath,
+  validatePathChain,
+  validateSymlinks,
 } from './paths.js';
 export {
   buildPattern,
@@ -44,11 +46,13 @@ export {
   getLineBounds,
   getLineNumber,
   isPresetPattern,
+  isUnsafeRegex,
   type MatchResult,
   type PatternMode,
   PRESET_PATTERNS,
   type PresetPattern,
   replaceAllMatches,
+  UnsafeRegexError,
 } from './patterns.js';
 export {
   type AutoResolveResult,

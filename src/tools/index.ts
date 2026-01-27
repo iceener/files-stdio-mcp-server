@@ -1,6 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { fsReadTool } from './fs-read.tool.js';
+import { fsSearchTool } from './fs-search.tool.js';
 import { fsWriteTool } from './fs-write.tool.js';
+import { fsManageTool } from './fs-manage.tool.js';
 
 /**
  * Get the underlying object schema from a ZodEffects (after .refine() or .transform())
@@ -24,7 +26,7 @@ function getBaseSchema(schema: unknown): unknown {
  * Register all tools with the MCP server.
  */
 export function registerTools(server: McpServer): void {
-  // fs_read - explore, read, search
+  // fs_read - explore and read
   // Note: We use getBaseSchema() to get the base schema before refine() transforms
   const readBaseSchema = getBaseSchema(fsReadTool.inputSchema) as { shape: unknown };
   server.registerTool(
@@ -36,7 +38,18 @@ export function registerTools(server: McpServer): void {
     fsReadTool.handler,
   );
 
-  // fs_write - create, update, delete
+  // fs_search - find files and search content
+  const searchBaseSchema = getBaseSchema(fsSearchTool.inputSchema) as { shape: unknown };
+  server.registerTool(
+    fsSearchTool.name,
+    {
+      description: fsSearchTool.description,
+      inputSchema: searchBaseSchema.shape,
+    },
+    fsSearchTool.handler,
+  );
+
+  // fs_write - create, update
   const writeBaseSchema = getBaseSchema(fsWriteTool.inputSchema) as { shape: unknown };
   server.registerTool(
     fsWriteTool.name,
@@ -46,6 +59,17 @@ export function registerTools(server: McpServer): void {
     },
     fsWriteTool.handler,
   );
+
+  // fs_manage - structural operations
+  const manageBaseSchema = getBaseSchema(fsManageTool.inputSchema) as { shape: unknown };
+  server.registerTool(
+    fsManageTool.name,
+    {
+      description: fsManageTool.description,
+      inputSchema: manageBaseSchema.shape,
+    },
+    fsManageTool.handler,
+  );
 }
 
 /**
@@ -53,5 +77,7 @@ export function registerTools(server: McpServer): void {
  */
 export const tools = {
   fsRead: fsReadTool,
+  fsSearch: fsSearchTool,
   fsWrite: fsWriteTool,
+  fsManage: fsManageTool,
 };

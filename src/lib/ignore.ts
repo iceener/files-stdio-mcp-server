@@ -1,9 +1,12 @@
 /**
  * Ignore file handling (.gitignore, .ignore).
+ *
+ * Uses the `ignore` package for proper gitignore semantics.
  */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import ignore, { type Ignore } from 'ignore';
 
 /** Default patterns to always ignore */
 const DEFAULT_IGNORE = [
@@ -25,58 +28,17 @@ export interface IgnoreMatcher {
 }
 
 /**
- * Parse ignore file content into patterns.
- */
-function parseIgnorePatterns(content: string): string[] {
-  return content
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-}
-
-/**
- * Convert glob pattern to regex.
- */
-function globToRegex(pattern: string): RegExp {
-  let regex = pattern
-    .replace(/\./g, '\\.')
-    .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-    .replace(/\*/g, '[^/]*')
-    .replace(/<<<GLOBSTAR>>>/g, '.*')
-    .replace(/\?/g, '[^/]');
-
-  // Handle directory patterns
-  if (pattern.endsWith('/')) {
-    regex = `${regex.slice(0, -2)}(/.*)?$`;
-  } else {
-    regex = `(^|/)${regex}(/.*)?$`;
-  }
-
-  return new RegExp(regex);
-}
-
-/**
  * Create an ignore matcher from patterns.
  */
 export function createIgnoreMatcher(patterns: string[]): IgnoreMatcher {
-  const allPatterns = [...DEFAULT_IGNORE, ...patterns];
-  const regexes = allPatterns.map((p) => ({
-    pattern: p,
-    regex: globToRegex(p),
-    negated: p.startsWith('!'),
-  }));
+  const ig: Ignore = ignore().add(DEFAULT_IGNORE).add(patterns);
 
   return {
     isIgnored(relativePath: string): boolean {
-      let ignored = false;
-
-      for (const { regex, negated } of regexes) {
-        if (regex.test(relativePath)) {
-          ignored = !negated;
-        }
-      }
-
-      return ignored;
+      // The ignore package requires paths without leading slashes
+      const normalized = relativePath.replace(/^\/+/, '');
+      if (!normalized) return false;
+      return ig.ignores(normalized);
     },
   };
 }
@@ -91,7 +53,11 @@ export async function loadIgnorePatterns(dir: string): Promise<string[]> {
   for (const filename of ['.gitignore', '.ignore']) {
     try {
       const content = await fs.readFile(path.join(dir, filename), 'utf8');
-      patterns.push(...parseIgnorePatterns(content));
+      const lines = content
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
+      patterns.push(...lines);
     } catch {
       // File doesn't exist, that's fine
     }

@@ -2,7 +2,37 @@
  * Pattern matching utilities with multiple modes.
  */
 
+import escapeStringRegexp from 'escape-string-regexp';
+
 export type PatternMode = 'literal' | 'regex' | 'fuzzy';
+
+/**
+ * Check if a regex pattern is potentially dangerous (catastrophic backtracking).
+ * This is a heuristic check that catches common dangerous patterns.
+ */
+export function isUnsafeRegex(pattern: string): boolean {
+  // Check for extremely long patterns (potential DoS)
+  if (pattern.length > 1000) return true;
+
+  // Check for nested quantifiers like (a+)+ or (a*)*
+  const nestedQuantifiers = /(\([^)]*[+*][^)]*\))[+*]/.test(pattern);
+  if (nestedQuantifiers) return true;
+
+  // Check for overlapping alternatives with quantifiers like (a|a)+
+  const overlappingAlternatives = /\(([^|)]+)\|.*\1.*\)[+*]/.test(pattern);
+  if (overlappingAlternatives) return true;
+
+  // Check for multiple adjacent quantifiers like a** or a++
+  // But allow lazy quantifiers like *? or +? which are safe
+  const adjacentQuantifiers = /[+*]{2,}/.test(pattern);
+  if (adjacentQuantifiers) return true;
+
+  // Check for excessive backreferences
+  const backrefs = pattern.match(/\\[1-9]/g);
+  if (backrefs && backrefs.length > 5) return true;
+
+  return false;
+}
 
 /**
  * Preset patterns for common Obsidian/Markdown patterns.
@@ -87,7 +117,7 @@ export interface MatchResult {
  * Escape special regex characters.
  */
 function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escapeStringRegexp(str);
 }
 
 /**
@@ -105,8 +135,18 @@ function normalizeWhitespace(str: string): string {
     .trim();
 }
 
+export class UnsafeRegexError extends Error {
+  constructor(pattern: string) {
+    super(
+      `Unsafe regex pattern detected: "${pattern.slice(0, 50)}${pattern.length > 50 ? '...' : ''}". Pattern may cause catastrophic backtracking.`,
+    );
+    this.name = 'UnsafeRegexError';
+  }
+}
+
 /**
  * Build a regex from pattern based on mode.
+ * Throws UnsafeRegexError if regex mode pattern is potentially dangerous.
  */
 export function buildPattern(
   pattern: string,
@@ -130,6 +170,10 @@ export function buildPattern(
       break;
 
     case 'regex':
+      // Security check for potentially dangerous regex patterns
+      if (isUnsafeRegex(pattern)) {
+        throw new UnsafeRegexError(pattern);
+      }
       source = pattern;
       break;
 
@@ -155,7 +199,12 @@ export function findMatches(
   content: string,
   pattern: string,
   mode: PatternMode,
-  options: { multiline?: boolean; wholeWord?: boolean; caseInsensitive?: boolean; maxMatches?: number } = {},
+  options: {
+    multiline?: boolean;
+    wholeWord?: boolean;
+    caseInsensitive?: boolean;
+    maxMatches?: number;
+  } = {},
 ): MatchResult[] {
   const regex = buildPattern(pattern, mode, options);
   const matches: MatchResult[] = [];

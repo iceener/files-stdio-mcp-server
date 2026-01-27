@@ -5,6 +5,8 @@
  * change visualization before applying modifications.
  */
 
+import { createTwoFilesPatch } from 'diff';
+
 // ─────────────────────────────────────────────────────────────
 // Diff Generation
 // ─────────────────────────────────────────────────────────────
@@ -32,94 +34,21 @@
  * // +universe
  */
 export function generateDiff(oldContent: string, newContent: string, filename = 'file'): string {
-  const oldLines = oldContent.split('\n');
-  const newLines = newContent.split('\n');
-
-  const hunks: string[] = [];
-  let i = 0;
-  let j = 0;
-
-  while (i < oldLines.length || j < newLines.length) {
-    // Find next difference
-    while (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
-      i++;
-      j++;
-    }
-
-    if (i >= oldLines.length && j >= newLines.length) break;
-
-    // Found a difference, collect the hunk
-    const hunkStartOld = Math.max(0, i - 3);
-    const hunkStartNew = Math.max(0, j - 3);
-
-    const hunkLines: string[] = [];
-
-    // Add context before
-    for (let k = hunkStartOld; k < i; k++) {
-      hunkLines.push(` ${oldLines[k]}`);
-    }
-
-    // Find extent of changes
-    let oldEnd = i;
-    let newEnd = j;
-    let contextAfter = 0;
-
-    while (oldEnd < oldLines.length || newEnd < newLines.length) {
-      if (
-        oldEnd < oldLines.length &&
-        newEnd < newLines.length &&
-        oldLines[oldEnd] === newLines[newEnd]
-      ) {
-        contextAfter++;
-        if (contextAfter >= 3) break;
-        oldEnd++;
-        newEnd++;
-      } else {
-        contextAfter = 0;
-        if (
-          oldEnd < oldLines.length &&
-          (newEnd >= newLines.length || oldLines[oldEnd] !== newLines[newEnd])
-        ) {
-          oldEnd++;
-        }
-        if (
-          newEnd < newLines.length &&
-          (oldEnd >= oldLines.length || oldLines[oldEnd - 1] !== newLines[newEnd])
-        ) {
-          newEnd++;
-        }
-      }
-    }
-
-    // Add removed lines
-    for (let k = i; k < oldEnd - contextAfter; k++) {
-      hunkLines.push(`-${oldLines[k]}`);
-    }
-
-    // Add added lines
-    for (let k = j; k < newEnd - contextAfter; k++) {
-      hunkLines.push(`+${newLines[k]}`);
-    }
-
-    // Add context after
-    for (let k = 0; k < contextAfter && oldEnd - contextAfter + k < oldLines.length; k++) {
-      hunkLines.push(` ${oldLines[oldEnd - contextAfter + k]}`);
-    }
-
-    if (hunkLines.length > 0) {
-      const header = `@@ -${hunkStartOld + 1},${oldEnd - hunkStartOld} +${hunkStartNew + 1},${newEnd - hunkStartNew} @@`;
-      hunks.push(`${header}\n${hunkLines.join('\n')}`);
-    }
-
-    i = oldEnd;
-    j = newEnd;
-  }
-
-  if (hunks.length === 0) {
+  if (oldContent === newContent) {
     return '(no changes)';
   }
 
-  return `--- a/${filename}\n+++ b/${filename}\n${hunks.join('\n')}`;
+  const patch = createTwoFilesPatch(
+    `a/${filename}`,
+    `b/${filename}`,
+    oldContent,
+    newContent,
+    '',
+    '',
+    { context: 3 },
+  );
+
+  return patch.trim();
 }
 
 // ─────────────────────────────────────────────────────────────

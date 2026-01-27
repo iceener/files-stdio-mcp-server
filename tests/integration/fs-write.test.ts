@@ -7,7 +7,7 @@
 // IMPORTANT: Setup must be imported first to set env vars before config loads
 import { FIXTURES_PATH } from '../setup.js';
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -209,74 +209,6 @@ describe('fs_write: update operation - line-based', () => {
   });
 });
 
-describe('fs_write: update operation - pattern-based', () => {
-  beforeEach(async () => {
-    await fs.writeFile(
-      path.join(TEST_DIR, 'pattern-test.md'),
-      '# Title\n\nThis is demo content.\n\nMore text here.',
-    );
-  });
-
-  test('replaces matched pattern (substring)', async () => {
-    const result = await runFsWrite({
-      path: 'write-tests/pattern-test.md',
-      operation: 'update',
-      action: 'replace',
-      pattern: 'demo',
-      content: 'production',
-    });
-
-    expect(result.success).toBe(true);
-
-    const content = await fs.readFile(path.join(TEST_DIR, 'pattern-test.md'), 'utf8');
-    expect(content).toContain('production content');
-    expect(content).not.toContain('demo content');
-  });
-
-  test('fails if pattern not found', async () => {
-    const result = await runFsWrite({
-      path: 'write-tests/pattern-test.md',
-      operation: 'update',
-      action: 'replace',
-      pattern: 'nonexistent',
-      content: 'replacement',
-    });
-
-    expect(result.success).toBe(false);
-    expect((result.error as { code: string }).code).toBe('PATTERN_NOT_FOUND');
-  });
-
-  test('fails if pattern matches multiple times', async () => {
-    await fs.writeFile(path.join(TEST_DIR, 'pattern-test.md'), 'word word word');
-
-    const result = await runFsWrite({
-      path: 'write-tests/pattern-test.md',
-      operation: 'update',
-      action: 'replace',
-      pattern: 'word',
-      content: 'replacement',
-    });
-
-    expect(result.success).toBe(false);
-    expect((result.error as { code: string }).code).toBe('MULTIPLE_MATCHES');
-  });
-
-  test('fuzzy mode handles whitespace variations', async () => {
-    await fs.writeFile(path.join(TEST_DIR, 'pattern-test.md'), 'function   test (  ) { }');
-
-    const result = await runFsWrite({
-      path: 'write-tests/pattern-test.md',
-      operation: 'update',
-      action: 'replace',
-      pattern: 'function test ( )',
-      patternMode: 'fuzzy',
-      content: 'function test()',
-    });
-
-    expect(result.success).toBe(true);
-  });
-});
-
 describe('fs_write: checksum verification', () => {
   test('succeeds with correct checksum', async () => {
     await fs.writeFile(path.join(TEST_DIR, 'checksum.md'), 'original');
@@ -312,50 +244,6 @@ describe('fs_write: checksum verification', () => {
 
     expect(result.success).toBe(false);
     expect((result.error as { code: string }).code).toBe('CHECKSUM_MISMATCH');
-  });
-});
-
-describe('fs_write: delete operation', () => {
-  test('deletes existing file', async () => {
-    await fs.writeFile(path.join(TEST_DIR, 'to-delete.md'), 'content');
-
-    const result = await runFsWrite({
-      path: 'write-tests/to-delete.md',
-      operation: 'delete',
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.operation).toBe('delete');
-
-    // Verify file is gone
-    await expect(fs.access(path.join(TEST_DIR, 'to-delete.md'))).rejects.toThrow();
-  });
-
-  test('fails for non-existent file', async () => {
-    const result = await runFsWrite({
-      path: 'write-tests/nonexistent.md',
-      operation: 'delete',
-    });
-
-    expect(result.success).toBe(false);
-    expect((result.error as { code: string }).code).toBe('NOT_FOUND');
-  });
-
-  test('dry run does not delete', async () => {
-    await fs.writeFile(path.join(TEST_DIR, 'keep-me.md'), 'content');
-
-    const result = await runFsWrite({
-      path: 'write-tests/keep-me.md',
-      operation: 'delete',
-      dryRun: true,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.applied).toBe(false);
-
-    // File should still exist - fs.access doesn't throw means file exists
-    const fileExists = await fs.access(path.join(TEST_DIR, 'keep-me.md')).then(() => true).catch(() => false);
-    expect(fileExists).toBe(true);
   });
 });
 
@@ -453,5 +341,15 @@ describe('fs_write: edge cases', () => {
     expect(result.success).toBe(false);
     expect((result.error as { code: string }).code).toBe('NOT_FOUND');
   });
-});
 
+  test('update requires lines', async () => {
+    const result = await runFsWrite({
+      path: 'write-tests/nonexistent.md',
+      operation: 'update',
+      action: 'replace',
+      content: 'content',
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

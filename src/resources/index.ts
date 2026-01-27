@@ -22,5 +22,5 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * }
  */
 export function registerResources(_server: McpServer): void {
-  // No resources defined — filesystem access is via fs_read/fs_write tools
+  // No resources defined — filesystem access is via fs_read/fs_search/fs_write/fs_manage tools
 }

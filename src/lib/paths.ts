@@ -2,6 +2,7 @@
  * Path resolution for multi-mount filesystem.
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config, type Mount } from '../config/env.js';
 
@@ -194,4 +195,75 @@ export function getMounts(): Mount[] {
  */
 export function isSingleMount(): boolean {
   return config.MOUNTS.length === 1;
+}
+
+/**
+ * Security check: Verify a path doesn't escape mount via symlinks.
+ * Returns the real path if safe, or an error if symlink points outside mount.
+ */
+export async function validateSymlinks(
+  absPath: string,
+  mount: Mount,
+): Promise<{ ok: true; realPath: string } | { ok: false; error: string }> {
+  try {
+    const stat = await fs.lstat(absPath);
+
+    if (stat.isSymbolicLink()) {
+      // Resolve the symlink target
+      const target = await fs.readlink(absPath);
+      const resolvedTarget = path.resolve(path.dirname(absPath), target);
+
+      // Check if resolved target is within mount
+      if (
+        !resolvedTarget.startsWith(mount.absolutePath + path.sep) &&
+        resolvedTarget !== mount.absolutePath
+      ) {
+        return {
+          ok: false,
+          error: `Symlink "${absPath}" points outside mount to "${resolvedTarget}"`,
+        };
+      }
+
+      // Recursively check the target (symlinks can chain)
+      return validateSymlinks(resolvedTarget, mount);
+    }
+
+    // Not a symlink, return the path as-is
+    return { ok: true, realPath: absPath };
+  } catch (err) {
+    // Path doesn't exist yet (for create operations) - that's fine
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === 'ENOENT') {
+      return { ok: true, realPath: absPath };
+    }
+    return { ok: false, error: `Failed to validate path: ${error.message}` };
+  }
+}
+
+/**
+ * Validate an entire path chain for symlink escapes.
+ * Checks each directory component from mount root to target.
+ */
+export async function validatePathChain(
+  absPath: string,
+  mount: Mount,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const relativePath = absPath.slice(mount.absolutePath.length + 1);
+  if (!relativePath) {
+    return { ok: true }; // Mount root itself
+  }
+
+  const segments = relativePath.split(path.sep);
+  let currentPath = mount.absolutePath;
+
+  for (const segment of segments) {
+    currentPath = path.join(currentPath, segment);
+
+    const validation = await validateSymlinks(currentPath, mount);
+    if (!validation.ok) {
+      return validation;
+    }
+  }
+
+  return { ok: true };
 }

@@ -1,6 +1,6 @@
 # Files MCP Server
 
-Stdio MCP server for sandboxed file access — explore directories, read files, search content, and safely edit with checksum verification.
+Stdio MCP server for sandboxed file access — read files, search content, safely edit with checksums, and manage file structure.
 
 Author: [overment](https://x.com/_overment)
 
@@ -27,11 +27,9 @@ The result: an agent that can reliably manage your Obsidian vault, documentation
 
 - ✅ **Directory Exploration** — tree view with file counts, sizes, timestamps
 - ✅ **File Reading** — line-numbered content with checksums for safe editing
-- ✅ **Find Files** — recursive search by filename patterns (`*.md`, `config.json`)
-- ✅ **Content Search** — literal, regex, fuzzy pattern matching with optional case-insensitivity
-- ✅ **Preset Patterns** — built-in Obsidian patterns (wikilinks, tags, tasks, headings)
+- ✅ **File & Content Search** — filename search + literal/regex/fuzzy content search
 - ✅ **Safe Editing** — checksum verification, dry-run preview, unified diffs
-- ✅ **Batch Operations** — `replaceAll` for bulk renames across a file
+- ✅ **Structural Operations** — delete, rename, move, copy, mkdir, stat
 - ✅ **Multi-Mount Support** — access multiple directories as virtual mount points
 - ✅ **Sandboxed** — cannot access paths outside configured mounts
 
@@ -116,7 +114,7 @@ This server is also available as an **MCP Bundle** (`.mcpb`) for one-click insta
 The manifest defines:
 
 - **Server configuration** — command, args, environment variables
-- **Tools** — `fs_read` and `fs_write` with descriptions
+- **Tools** — `fs_read`, `fs_search`, `fs_write`, `fs_manage` with descriptions
 - **User config** — prompts for `FS_ROOT` directory during installation
 
 ```json
@@ -162,10 +160,11 @@ The `${user_config.FS_ROOT}` syntax injects the user-selected directory into the
 
 MANDATORY WORKFLOW:
 1. fs_read(".") → see available mounts
-2. fs_read("path/file.md") → get content + checksum
-3. fs_write with dryRun=true → preview diff
-4. fs_write with dryRun=false + checksum → apply change
-5. Verify diff in response matches your intent
+2. fs_search(...) → locate files or content
+3. fs_read("path/file.md") → get content + checksum
+4. fs_write with dryRun=true → preview diff
+5. fs_write with dryRun=false + checksum → apply change
+6. fs_manage for structural changes (delete/rename/move/copy/mkdir)
 ```
 
 ---
@@ -174,30 +173,21 @@ MANDATORY WORKFLOW:
 
 ### `fs_read`
 
-Explore directories, read files, find files by name, or search content.
+Read files or list directories.
 
 **Input:**
 ```ts
 {
   path: string;                    // "." for root, "docs/", "notes/todo.md"
   
-  // Finding files by name
-  find?: string;                   // "*.md", "config.json"
-  
-  // Searching content
-  pattern?: string;                // Text to search for
-  patternMode?: "literal" | "regex" | "fuzzy";
-  caseInsensitive?: boolean;        // Ignore case when matching
-  preset?: "wikilinks" | "tags" | "tasks" | "tasks_open" | "tasks_done" 
-         | "headings" | "codeblocks" | "frontmatter";
-  
   // Options
-  depth?: number;                  // Directory traversal depth (default 3)
+  depth?: number;                  // Directory traversal depth (default 1)
   details?: boolean;               // Include size/modified (default false)
   lines?: string;                  // "10-50" for partial read
-  context?: number;                // Lines around matches (default 3)
-  maxFiles?: number;               // Max files with matches to return (default: no limit)
-  maxMatches?: number;             // Limit matches (default 100)
+  types?: string[];                // Filter directory listing by type
+  glob?: string;                   // Glob filter for listing
+  exclude?: string[];              // Exclude patterns
+  respectIgnore?: boolean;         // Honor .gitignore (default true)
 }
 ```
 
@@ -206,58 +196,93 @@ Explore directories, read files, find files by name, or search content.
 {
   success: boolean;
   path: string;
-  type: "directory" | "file" | "search";
+  type: "directory" | "file";
   
   // For directories
-  tree?: {
-    entries: Array<{ path, kind, children?, size?, modified? }>;
-    summary: string;
-  };
+  entries?: Array<{ path, kind, children?, size?, modified? }>;
+  summary?: string;
   
   // For files
   content?: {
     text: string;        // With line numbers
     checksum: string;    // Pass to fs_write
     totalLines: number;
+    range?: { start: number; end: number };
+    truncated: boolean;
   };
-  
-  // For searches
-  matches?: Array<{ file, line, column, text, context }>;
-  matchCount?: number;
   
   hint: string;          // Next action suggestion
 }
 ```
 
+### `fs_search`
+
+Find files by name and search content within files.
+
+**Input:**
+```ts
+{
+  path: string;                   // "." for all mounts
+  query: string;                  // Search term
+  target?: "all" | "filename" | "content";
+  patternMode?: "literal" | "regex" | "fuzzy";
+  caseInsensitive?: boolean;
+  wholeWord?: boolean;
+  multiline?: boolean;
+  types?: string[];
+  glob?: string;
+  exclude?: string[];
+  depth?: number;                 // Default 5
+  maxResults?: number;            // Default 100
+  context?: number;               // Default 3
+  respectIgnore?: boolean;
+}
+```
+
+**Output:**
+```ts
+{
+  success: boolean;
+  query: string;
+  target: "all" | "filename" | "content";
+  results: {
+    byFilename: Array<{ path, score, matchIndices }>;
+    byContent: Array<{ path, matches: Array<{ line, endLine, matchCount, text, context }> }>;
+  };
+  stats: {
+    filenameMatches: number;
+    contentMatches: number;
+    filesSearched: number;
+  };
+  truncated: boolean;
+  hint: string;
+}
+```
+
 ### `fs_write`
 
-Create, modify, or delete files with safety features.
+Create or update files with safety features.
 
 **Input:**
 ```ts
 {
   path: string;
-  operation: "create" | "update" | "delete";
+  operation: "create" | "update";
   
   // For create
   content?: string;
   
-  // For update — target by lines OR pattern
+  // For update — target by lines
   lines?: string;                  // "10-15" — PREFERRED
-  pattern?: string;                // Text to find
-  patternMode?: "literal" | "regex" | "fuzzy";
-  caseInsensitive?: boolean;       // Ignore case
   
   // For update — action
   action?: "replace" | "insert_before" | "insert_after" | "delete_lines";
   content?: string;                // New content
   
-  // Batch replace
-  replaceAll?: boolean;            // Replace ALL occurrences
-  
   // Safety
   checksum?: string;               // From fs_read — RECOMMENDED
   dryRun?: boolean;                // Preview only (default false)
+  createDirs?: boolean;            // Auto-create parent dirs (default true)
 }
 ```
 
@@ -266,7 +291,7 @@ Create, modify, or delete files with safety features.
 {
   success: boolean;
   path: string;
-  operation: "create" | "update" | "delete";
+  operation: "create" | "update";
   applied: boolean;
   
   result?: {
@@ -286,26 +311,31 @@ Create, modify, or delete files with safety features.
 }
 ```
 
----
+### `fs_manage`
 
-## Preset Patterns (Obsidian/Markdown)
+Structural filesystem operations.
 
-Built-in patterns for common searches:
+**Input:**
+```ts
+{
+  operation: "delete" | "rename" | "move" | "copy" | "mkdir" | "stat";
+  path: string;
+  target?: string;                 // rename/move/copy
+  recursive?: boolean;             // directory ops (default false)
+  force?: boolean;                 // overwrite (default false)
+}
+```
 
-| Preset | Finds |
-|--------|-------|
-| `wikilinks` | `[[Note]]` and `[[Note\|Display]]` |
-| `tags` | `#tag` and `#nested/tag` |
-| `tasks` | `- [ ]` and `- [x]` (all tasks) |
-| `tasks_open` | `- [ ]` only (incomplete) |
-| `tasks_done` | `- [x]` only (completed) |
-| `headings` | `#` through `######` |
-| `codeblocks` | ` ``` ` code blocks |
-| `frontmatter` | YAML `---` blocks |
-
-**Example:**
-```json
-{ "path": ".", "preset": "tasks_open" }
+**Output:**
+```ts
+{
+  success: boolean;
+  operation: string;
+  path: string;
+  target?: string;
+  stat?: { size, modified, created, isDirectory };
+  hint: string;
+}
 ```
 
 ---
@@ -332,22 +362,22 @@ Built-in patterns for common searches:
 hint: "Showing contents of 'vault'. Use fs_read on any path to explore deeper."
 ```
 
-### 2. Find a file
+### 2. Search for a file by name
 
 ```json
-{ "path": ".", "find": "*.md" }
+{ "path": ".", "query": "todo", "target": "filename" }
 ```
 
 **Response:**
 ```
-Found 42 item(s) matching "*.md"
+Found 3 filename match(es)
 
-- Core/Values.md
-- Core/Process.md
-- Projects/Alice.md
+- Core/Todo.md
+- Projects/Todo.md
+- inbox.md
 ...
 
-hint: "Found 42 matching files. Use fs_read on a specific path to see its content."
+hint: "Found 3 filename match(es)."
 ```
 
 ### 3. Read a file
@@ -375,12 +405,12 @@ hint: "To edit this file, use fs_write with checksum a1b2c3d4e5f6."
 ### 4. Find all incomplete tasks
 
 ```json
-{ "path": ".", "preset": "tasks_open" }
+{ "path": ".", "query": "- \\[ \\] ", "patternMode": "regex", "target": "content" }
 ```
 
 **Response:**
 ```
-Found 7 matches in 42 files across all mounts.
+Found 7 content match(es) in 4 file(s).
 
 - Projects/Alice.md:12 — "- [ ] Implement search"
 - Projects/Alice.md:15 — "- [ ] Add tests"
@@ -388,14 +418,14 @@ Found 7 matches in 42 files across all mounts.
 ...
 ```
 
-### 5. Replace text (preview first)
+### 5. Replace text (preview first, line-based)
 
 ```json
 {
   "path": "Core/Values.md",
   "operation": "update",
-  "pattern": "Be honest",
   "action": "replace",
+  "lines": "3",
   "content": "Act with integrity",
   "checksum": "a1b2c3d4e5f6",
   "dryRun": true
@@ -415,23 +445,20 @@ DRY RUN — no changes applied.
 hint: "Review the diff above. Run with dryRun=false to apply."
 ```
 
-### 6. Bulk rename wikilinks
+### 6. Move a file to archive
 
 ```json
 {
+  "operation": "move",
   "path": "Projects/Alice.md",
-  "operation": "update",
-  "pattern": "[[Old Name]]",
-  "action": "replace",
-  "content": "[[New Name]]",
-  "replaceAll": true,
-  "dryRun": true
+  "target": "Archive/Alice.md",
+  "force": true
 }
 ```
 
 **Response:**
 ```
-DRY RUN — would replace 3 occurrence(s) at lines 5, 12, 28.
+Move completed successfully.
 ```
 
 ### 7. Mark task as complete
@@ -440,8 +467,8 @@ DRY RUN — would replace 3 occurrence(s) at lines 5, 12, 28.
 {
   "path": "inbox.md",
   "operation": "update",
-  "pattern": "- [ ] Review PR",
   "action": "replace",
+  "lines": "3",
   "content": "- [x] Review PR",
   "checksum": "xyz789"
 }
@@ -542,8 +569,10 @@ src/
 │   └── mcp.ts            # McpServer builder
 ├── tools/
 │   ├── index.ts          # Tool registration
-│   ├── fs-read.tool.ts   # Read, explore, search
-│   └── fs-write.tool.ts  # Create, update, delete
+│   ├── fs-read.tool.ts   # Read and explore
+│   ├── fs-search.tool.ts # Filename + content search
+│   ├── fs-write.tool.ts  # Create and update
+│   └── fs-manage.tool.ts # Structural operations
 ├── lib/
 │   ├── checksum.ts       # SHA256 checksums
 │   ├── diff.ts           # Unified diff generation
@@ -551,7 +580,7 @@ src/
 │   ├── ignore.ts         # .gitignore support
 │   ├── lines.ts          # Line manipulation
 │   ├── paths.ts          # Multi-mount path resolution
-│   └── patterns.ts       # Pattern matching & presets
+│   └── patterns.ts       # Pattern matching utilities
 └── utils/
     ├── errors.ts         # Error utilities
     └── logger.ts         # Logging
@@ -566,8 +595,8 @@ src/
 | "SANDBOXED FILESYSTEM: Absolute paths not allowed" | Use relative paths within mounts. Start with `fs_read(".")` to see available mounts. |
 | "Path does not match any mount" | Check `FS_ROOTS` is set correctly. Paths must start with a mount name (e.g., `vault/notes.md`). |
 | "CHECKSUM_MISMATCH" | File changed since you read it. Re-read with `fs_read` to get fresh content. |
-| "PATTERN_NOT_FOUND" | Pattern doesn't exist in file. Try `patternMode="fuzzy"` or read file first. |
-| "MULTIPLE_MATCHES" | Pattern matches multiple times. Use `replaceAll=true` or be more specific. |
+| "DIRECTORY_NOT_EMPTY" | Directory operations need `recursive=true` for delete/move/copy. |
+| "ALREADY_EXISTS" | Target already exists. Use `force=true` where supported. |
 | Binary file errors | Only text files can be read/written. Check file extension. |
 | Single mount still shows "docs" | Restart the MCP server after changing `FS_ROOTS`. |
 

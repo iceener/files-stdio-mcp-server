@@ -108,16 +108,15 @@ You have access to a sandboxed filesystem through this server.
 
 ✏️ BEFORE MODIFYING (update/replace):
    1. fs_read the file → get current content + checksum
-   2. Identify exact lines/patterns to change
+   2. Use fs_search to locate content, then identify exact line numbers
    3. Use dryRun=true to preview the change
    4. Apply with the checksum from step 1
    5. Verify the diff in response matches your intent
 
-🗑️ BEFORE DELETING:
-   1. fs_read the file to confirm it exists and see contents
+🗑️ BEFORE DELETING/RENAMING/MOVING/COPYING:
+   1. Use fs_read to confirm important content if needed
    2. Confirm with user if content looks important
-   3. Use dryRun=true first
-   4. Then apply deletion
+   3. Use fs_manage for structural changes
 
 📁 BEFORE CREATING:
    1. fs_read the parent directory to check for conflicts
@@ -149,30 +148,27 @@ All paths are relative to these mount points. Examples:
 EXPLORE FIRST:
   fs_read(".") → see available mounts
   fs_read("${firstMount}/") → explore a mount
-  fs_read(".", find="*.md") → find all markdown files
+  fs_search(".", query="config") → find files and content
 
 READ BEFORE EDIT:
   fs_read("${firstMount}/file.md") → get content + checksum
   Note the line numbers for precise edits
+
+SEARCH:
+  fs_search { path: "${firstMount}/", query: "TODO" } → find content
+  fs_search { path: "${firstMount}/", query: "config", target: "filename" } → find files by name
 
 SAFE EDITING:
   fs_write with dryRun=true → preview diff
   fs_write with dryRun=false → apply change
   Check returned diff to verify
 
-═══════════════════════════════════════════════════════════
-                    COMMON PATTERNS (PRESETS)
-═══════════════════════════════════════════════════════════
-
-For Obsidian/Markdown files, use these presets:
-- preset="wikilinks" → find [[links]]
-- preset="tags" → find #tags
-- preset="tasks" → find - [ ] and - [x]
-- preset="tasks_open" → find incomplete tasks only
-- preset="tasks_done" → find completed tasks only
-- preset="headings" → find # headings
-- preset="codeblocks" → find \`\`\` code blocks
-- preset="frontmatter" → find YAML frontmatter
+MANAGE (STRUCTURE):
+  fs_manage { operation: "rename", path: "${firstMount}/old.md", target: "${firstMount}/new.md" }
+  fs_manage { operation: "move", path: "${firstMount}/a.md", target: "${firstMount}/archive/a.md", force: true }
+  fs_manage { operation: "copy", path: "${firstMount}/a.md", target: "${firstMount}/backup/a.md" }
+  fs_manage { operation: "mkdir", path: "${firstMount}/archive", recursive: true }
+  fs_manage { operation: "delete", path: "${firstMount}/old.md" }
 
 ═══════════════════════════════════════════════════════════
                     CHECKSUMS & SAFETY
@@ -182,10 +178,9 @@ Every fs_read returns a checksum. This is your "file version".
 Pass it to fs_write to ensure file hasn't changed.
 If mismatch occurs, re-read to get current state.
 
-LINE NUMBERS vs PATTERNS:
+LINE NUMBERS:
 - Prefer lines="10-15" when you have line numbers
-- Use pattern="text" only when line numbers unknown
-- Use replaceAll=true to replace ALL occurrences of a pattern
+ - Use fs_search to locate content, then fs_read to get exact line numbers
 `.trim();
 }
 

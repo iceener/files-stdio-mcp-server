@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "files-mcp",
   "version": "1.0.0",
-  "description": "MCP server for sandboxed file access. Provides read and write operations with checksum-based safety, pattern matching, line targeting, and preset searches for Obsidian/Markdown content.",
+  "description": "MCP server for sandboxed file access. Provides read, search, write, and manage operations with checksum-based safety and line targeting.",
   "author": {
     "name": "overment"
   },
@@ -22,11 +22,19 @@
   "tools": [
     {
       "name": "fs_read",
-      "description": "Explore directories, read files, find files by name, or search content. Returns line numbers and checksums needed for editing. Supports preset patterns for Obsidian/Markdown. IMPORTANT: For OR searches (term1|term2), use patternMode=\"regex\". Default mode treats | as literal text, not OR operator."
+      "description": "Read files or list directories. Returns line numbers and checksums needed for editing."
+    },
+    {
+      "name": "fs_search",
+      "description": "Find files by name and search file contents."
     },
     {
       "name": "fs_write",
-      "description": "Create, modify, or delete files in the sandboxed filesystem. IMPORTANT: Always call fs_read first to get the checksum. Supports line-based and pattern-based targeting with dryRun preview."
+      "description": "Create or update files in the sandboxed filesystem. IMPORTANT: Always call fs_read first to get the checksum. Line-based targeting with dryRun preview."
+    },
+    {
+      "name": "fs_manage",
+      "description": "Structural operations for files and directories: delete, rename, move, copy, mkdir, stat."
     }
   ],
   "user_config": {

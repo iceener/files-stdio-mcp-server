@@ -1,7 +1,7 @@
 /**
  * fs_write Tool
  *
- * Unified modification tool for create, update, and delete operations.
+ * Create and update file content with line-based targeting.
  */
 
 import fs from 'node:fs/promises';
@@ -10,19 +10,16 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
   deleteLines,
-  findMatches,
-  findUniqueMatch,
   generateChecksum,
   generateDiff,
   getMounts,
   insertAfterLine,
   insertBeforeLine,
   isTextFile,
-  type PatternMode,
   parseLineRange,
-  replaceAllMatches,
   replaceLines,
   resolvePath as resolveVirtualPath,
+  validatePathChain,
 } from '../lib/index.js';
 import type { HandlerExtra } from '../types/index.js';
 
@@ -36,18 +33,16 @@ export const fsWriteInputSchema = z
       .string()
       .min(1)
       .describe(
-        'Relative path to the file. For create: where to create. For update/delete: file to modify. ' +
+        'Relative path to the file. For create: where to create. For update: file to modify. ' +
           'Parent directories are created automatically for new files.',
       ),
 
     operation: z
-      .enum(['create', 'update', 'delete'])
+      .enum(['create', 'update'])
       .describe(
         'REQUIRED. The operation type: ' +
           '"create" = make new file (fails if exists), ' +
-          '"update" = modify existing file (requires "action" parameter), ' +
-          '"delete" = remove file permanently. ' +
-          'NOTE: This is "operation", not "action".',
+          '"update" = modify existing file (requires "action" and "lines" parameters).',
       ),
 
     // Targeting (for update)
@@ -55,50 +50,8 @@ export const fsWriteInputSchema = z
       .string()
       .optional()
       .describe(
-        'Target specific lines for update. Format: "10" (line 10), "10-15" (lines 10-15 inclusive). ' +
-          'PREFERRED over pattern — line numbers are unambiguous. Get line numbers from fs_read output.',
-      ),
-
-    pattern: z
-      .string()
-      .optional()
-      .describe(
-        "Target content by pattern for update. Use when you don't have line numbers. " +
-          'The FIRST match is used. If multiple matches exist, use lines instead.',
-      ),
-
-    patternMode: z
-      .enum(['literal', 'regex', 'fuzzy'])
-      .optional()
-      .default('literal')
-      .describe(
-        '"literal" (default): Exact text match. "regex": Regular expression. ' +
-          '"fuzzy": Normalizes whitespace.',
-      ),
-
-    caseInsensitive: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe('Ignore case when matching patterns. Works with all pattern modes.'),
-
-    multiline: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        'Enable patterns to span multiple lines. The dot (.) will match newlines. ' +
-          'Note: ^ and $ still match string boundaries, not line boundaries.',
-      ),
-
-    replaceAll: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        'When true with pattern+replace, replaces ALL occurrences instead of requiring unique match. ' +
-          'Useful for bulk renames like [[OldName]] → [[NewName]] across a file. ' +
-          'Use with caution — preview with dryRun=true first.',
+        'REQUIRED for update. Target specific lines. Format: "10" (line 10), "10-15" (lines 10-15 inclusive). ' +
+          'Get line numbers from fs_read output.',
       ),
 
     // Action (for update)
@@ -107,11 +60,10 @@ export const fsWriteInputSchema = z
       .optional()
       .describe(
         'REQUIRED when operation="update". Specifies what to do with targeted content: ' +
-          '"replace" = replace target with new content, ' +
+          '"replace" = replace target lines with new content, ' +
           '"insert_before" = add content before target, ' +
           '"insert_after" = add content after target, ' +
-          '"delete_lines" = remove target lines. ' +
-          'NOTE: This is "action" (sub-operation), different from "operation" (main type).',
+          '"delete_lines" = remove target lines.',
       ),
 
     content: z
@@ -119,7 +71,7 @@ export const fsWriteInputSchema = z
       .optional()
       .describe(
         'The content to write. Required for create, replace, insert_before, insert_after. ' +
-          'Not needed for delete or delete_lines.',
+          'Not needed for delete_lines.',
       ),
 
     // Safety
@@ -137,7 +89,7 @@ export const fsWriteInputSchema = z
       .default(false)
       .describe(
         'If true, returns what WOULD change without applying it. ' +
-          'Returns a unified diff. Use to preview and verify complex edits.',
+          'Returns a unified diff. Use to preview and verify edits.',
       ),
 
     createDirs: z
@@ -149,7 +101,7 @@ export const fsWriteInputSchema = z
   .passthrough() // Allow extra keys from SDK context
   .refine(
     (data) => {
-      if (data.operation === 'create' && !data.content) {
+      if (data.operation === 'create' && data.content === undefined) {
         return false;
       }
       return true;
@@ -163,11 +115,24 @@ export const fsWriteInputSchema = z
       }
       return true;
     },
-    { message: '"action" parameter is required when operation="update". Use action="replace", "insert_before", "insert_after", or "delete_lines".', path: ['action'] },
+    {
+      message:
+        '"action" parameter is required when operation="update". Use action="replace", "insert_before", "insert_after", or "delete_lines".',
+      path: ['action'],
+    },
   )
   .refine(
     (data) => {
-      if (data.operation === 'update' && data.action !== 'delete_lines' && !data.content) {
+      if (data.operation === 'update' && !data.lines) {
+        return false;
+      }
+      return true;
+    },
+    { message: '"lines" parameter is required when operation="update".', path: ['lines'] },
+  )
+  .refine(
+    (data) => {
+      if (data.operation === 'update' && data.action !== 'delete_lines' && data.content === undefined) {
         return false;
       }
       return true;
@@ -184,7 +149,7 @@ export type FsWriteInput = z.infer<typeof fsWriteInputSchema>;
 interface FsWriteResult {
   success: boolean;
   path: string;
-  operation: 'create' | 'update' | 'delete';
+  operation: 'create' | 'update';
   applied: boolean;
   result?: {
     action: string;
@@ -277,52 +242,6 @@ async function createFile(
   };
 }
 
-async function deleteFile(
-  absPath: string,
-  relativePath: string,
-  dryRun: boolean,
-): Promise<FsWriteResult> {
-  if (!(await fileExists(absPath))) {
-    return {
-      success: false,
-      path: relativePath,
-      operation: 'delete',
-      applied: false,
-      error: {
-        code: 'NOT_FOUND',
-        message: `File does not exist: ${relativePath}`,
-      },
-      hint: 'File not found. Use fs_read to check if the path is correct.',
-    };
-  }
-
-  if (dryRun) {
-    return {
-      success: true,
-      path: relativePath,
-      operation: 'delete',
-      applied: false,
-      result: {
-        action: 'would_delete',
-      },
-      hint: 'DRY RUN — file would be deleted. Run with dryRun=false to apply.',
-    };
-  }
-
-  await fs.unlink(absPath);
-
-  return {
-    success: true,
-    path: relativePath,
-    operation: 'delete',
-    applied: true,
-    result: {
-      action: 'deleted',
-    },
-    hint: 'File deleted successfully.',
-  };
-}
-
 async function updateFile(
   absPath: string,
   relativePath: string,
@@ -379,175 +298,7 @@ async function updateFile(
     };
   }
 
-  // Determine target range
-  let targetStart: number;
-  let targetEnd: number;
-  let patternMatch: { index: number; text: string } | null = null;
-
-  if (input.lines) {
-    // Line-based targeting
-    const range = parseLineRange(input.lines);
-    if (!range) {
-      return {
-        success: false,
-        path: relativePath,
-        operation: 'update',
-        applied: false,
-        error: {
-          code: 'INVALID_RANGE',
-          message: `Invalid line range: ${input.lines}`,
-        },
-        hint: 'Line range format: "10" for single line, "10-15" for range.',
-      };
-    }
-
-    const lines = currentContent.split('\n');
-    if (range.start > lines.length) {
-      return {
-        success: false,
-        path: relativePath,
-        operation: 'update',
-        applied: false,
-        error: {
-          code: 'OUT_OF_RANGE',
-          message: `Line ${range.start} is beyond file end (${lines.length} lines)`,
-        },
-        hint: `File has ${lines.length} lines. Adjust your line range.`,
-      };
-    }
-
-    targetStart = range.start;
-    targetEnd = Math.min(range.end, lines.length);
-  } else if (input.pattern) {
-    // Pattern-based targeting
-    // Check if replaceAll is requested
-    if (input.replaceAll && input.action === 'replace') {
-      // ReplaceAll mode: replace all occurrences
-      const content = input.content ?? '';
-      const result = replaceAllMatches(
-        currentContent,
-        input.pattern,
-        content,
-        input.patternMode as PatternMode,
-        { multiline: input.multiline, caseInsensitive: input.caseInsensitive },
-      );
-
-      if (result.count === 0) {
-        return {
-          success: false,
-          path: relativePath,
-          operation: 'update',
-          applied: false,
-          error: {
-            code: 'PATTERN_NOT_FOUND',
-            message: `Pattern not found: "${input.pattern}"`,
-            recoveryHint: 'Read the file to see current content, or try patternMode="fuzzy".',
-          },
-          hint: 'Pattern not found. Use fs_read to see current content and find the correct pattern.',
-        };
-      }
-
-      // Generate diff
-      const diff = generateDiff(currentContent, result.newContent, relativePath);
-
-      if (input.dryRun) {
-        return {
-          success: true,
-          path: relativePath,
-          operation: 'update',
-          applied: false,
-          result: {
-            action: 'would_replace_all',
-            linesAffected: result.affectedLines.length,
-            diff,
-          },
-          hint: `DRY RUN — would replace ${result.count} occurrence(s) at lines ${result.affectedLines.join(', ')}. Run with dryRun=false to apply.`,
-        };
-      }
-
-      // Apply changes
-      await fs.writeFile(absPath, result.newContent, 'utf8');
-      const newChecksum = generateChecksum(result.newContent);
-
-      return {
-        success: true,
-        path: relativePath,
-        operation: 'update',
-        applied: true,
-        result: {
-          action: 'replaced_all',
-          linesAffected: result.affectedLines.length,
-          newChecksum,
-          diff,
-        },
-        hint: `Replaced ${result.count} occurrence(s) at lines ${result.affectedLines.join(', ')}. New checksum: ${newChecksum}.`,
-      };
-    }
-
-    // Single match mode (default)
-    const matchResult = findUniqueMatch(
-      currentContent,
-      input.pattern,
-      input.patternMode as PatternMode,
-      {
-        multiline: input.multiline,
-        caseInsensitive: input.caseInsensitive,
-      },
-    );
-
-    if ('error' in matchResult) {
-      if (matchResult.error === 'not_found') {
-        return {
-          success: false,
-          path: relativePath,
-          operation: 'update',
-          applied: false,
-          error: {
-            code: 'PATTERN_NOT_FOUND',
-            message: `Pattern not found: "${input.pattern}"`,
-            recoveryHint: 'Read the file to see current content, or try patternMode="fuzzy".',
-          },
-          hint: 'Pattern not found. Use fs_read to see current content and find the correct pattern.',
-        };
-      } else {
-        // Multiple matches found - suggest replaceAll or specific line
-        const matches = findMatches(
-          currentContent,
-          input.pattern,
-          input.patternMode as PatternMode,
-          {
-            multiline: input.multiline,
-            caseInsensitive: input.caseInsensitive,
-            maxMatches: 10,
-          },
-        );
-
-        return {
-          success: false,
-          path: relativePath,
-          operation: 'update',
-          applied: false,
-          error: {
-            code: 'MULTIPLE_MATCHES',
-            message: `Pattern matched ${matchResult.count} times at lines ${matchResult.lines.join(', ')}`,
-            recoveryHint:
-              'Use replaceAll=true to replace all, or lines="N" to target specific match.',
-          },
-          hint: `Pattern matched ${matchResult.count} times at lines ${matchResult.lines.join(', ')}. Options: (1) Use replaceAll=true to replace all occurrences, or (2) Use lines="${matches[0]?.line}" to target the first match.`,
-        };
-      }
-    }
-
-    const match = matchResult.match;
-    targetStart = match.line;
-
-    // For multiline matches, calculate end line
-    const matchLines = match.text.split('\n').length;
-    targetEnd = match.line + matchLines - 1;
-
-    // Store match for substring replacement
-    patternMatch = match;
-  } else {
+  if (!input.lines) {
     return {
       success: false,
       path: relativePath,
@@ -555,11 +306,45 @@ async function updateFile(
       applied: false,
       error: {
         code: 'NO_TARGET',
-        message: 'Either lines or pattern must be specified for update',
+        message: '"lines" must be specified for update',
       },
-      hint: 'Specify lines="10-15" or pattern="text to find" to target content for modification.',
+      hint: 'Specify lines="10-15" to target content for modification.',
     };
   }
+
+  // Determine target range
+  const range = parseLineRange(input.lines);
+  if (!range) {
+    return {
+      success: false,
+      path: relativePath,
+      operation: 'update',
+      applied: false,
+      error: {
+        code: 'INVALID_RANGE',
+        message: `Invalid line range: ${input.lines}`,
+      },
+      hint: 'Line range format: "10" for single line, "10-15" for range.',
+    };
+  }
+
+  const lines = currentContent.split('\n');
+  if (range.start > lines.length) {
+    return {
+      success: false,
+      path: relativePath,
+      operation: 'update',
+      applied: false,
+      error: {
+        code: 'OUT_OF_RANGE',
+        message: `Line ${range.start} is beyond file end (${lines.length} lines)`,
+      },
+      hint: `File has ${lines.length} lines. Adjust your line range.`,
+    };
+  }
+
+  const targetStart = range.start;
+  const targetEnd = Math.min(range.end, lines.length);
 
   // Apply action
   let newContent: string;
@@ -571,23 +356,9 @@ async function updateFile(
 
   switch (input.action) {
     case 'replace':
-      if (patternMatch) {
-        // Substring replacement: replace only the matched text
-        newContent =
-          currentContent.slice(0, patternMatch.index) +
-          content +
-          currentContent.slice(patternMatch.index + patternMatch.text.length);
-        actionDescription = 'replaced';
-        // Calculate actual lines affected (old match lines + new content lines - overlap)
-        const oldMatchLines = patternMatch.text.split('\n').length;
-        const newContentLines = content.split('\n').length;
-        linesAffected = Math.max(oldMatchLines, newContentLines);
-      } else {
-        // Line-based replacement (when using lines="N-M")
-        newContent = replaceLines(currentContent, targetStart, targetEnd, content);
-        actionDescription = 'replaced';
-        linesAffected = targetEnd - targetStart + 1;
-      }
+      newContent = replaceLines(currentContent, targetStart, targetEnd, content);
+      actionDescription = 'replaced';
+      linesAffected = targetEnd - targetStart + 1;
       break;
 
     case 'insert_before':
@@ -665,13 +436,13 @@ async function updateFile(
 
 export const fsWriteTool = {
   name: 'fs_write',
-  description: `Create, modify, or delete files in the sandboxed filesystem.
+  description: `Create or update files in the sandboxed filesystem.
 
-🔒 SANDBOXED FILESYSTEM — This tool can ONLY write to specific mounted directories.
+SANDBOXED FILESYSTEM — This tool can ONLY write to specific mounted directories.
    You CANNOT write to arbitrary system paths like /Users or C:\\.
    Use fs_read(".") first to see available mounts.
 
-⚠️ PREREQUISITE: You MUST call fs_read on a file BEFORE modifying it.
+PREREQUISITE: You MUST call fs_read on a file BEFORE modifying it.
    This gives you: (1) current content, (2) line numbers, (3) checksum.
 
 ═══════════════════════════════════════════════════════════
@@ -691,31 +462,15 @@ CREATE — Make a new file
   Creates parent directories automatically.
   Fails if file already exists (use update to modify).
 
-UPDATE — Modify existing file
-  Required: path, action, content (except for delete_lines)
-  Target using EITHER:
-  - lines: "10-15" — PREFERRED, unambiguous
-  - pattern: "text" — use when line numbers unknown
+UPDATE — Modify existing file (line-based only)
+  Required: path, action, lines
+  Actions:
+  - replace: Replace target lines with new content
+  - insert_before: Add content before target
+  - insert_after: Add content after target
+  - delete_lines: Remove target lines
 
-DELETE — Remove a file
-  Required: path only. Cannot be undone.
-
-═══════════════════════════════════════════════════════════
-                    ACTIONS (for update)
-═══════════════════════════════════════════════════════════
-- replace: Replace target lines/pattern with new content
-- insert_before: Add content before target
-- insert_after: Add content after target
-- delete_lines: Remove target lines
-
-═══════════════════════════════════════════════════════════
-                    REPLACE ALL
-═══════════════════════════════════════════════════════════
-To replace ALL occurrences of a pattern (e.g., rename [[OldName]] → [[NewName]]):
-  { pattern: "[[OldName]]", replaceAll: true, content: "[[NewName]]" }
-
-Without replaceAll, multiple matches cause an error.
-Always use dryRun=true first to preview bulk changes.
+Use fs_search to locate content, then fs_read to get exact line numbers.
 
 ═══════════════════════════════════════════════════════════
                     SAFETY
@@ -723,7 +478,7 @@ Always use dryRun=true first to preview bulk changes.
 - checksum: Pass from fs_read to prevent stale overwrites
 - dryRun: Preview diff without applying (ALWAYS use first)
 
-🚫 DO NOT call fs_write without first calling fs_read on the same file.`,
+DO NOT call fs_write without first calling fs_read on the same file.`,
 
   inputSchema: fsWriteInputSchema,
 
@@ -768,7 +523,22 @@ Always use dryRun=true first to preview bulk changes.
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
 
-    const { absolutePath, virtualPath } = resolved.resolved;
+    const { absolutePath, virtualPath, mount } = resolved.resolved;
+
+    // Security: Validate symlinks don't escape mount
+    const symlinkCheck = await validatePathChain(absolutePath, mount);
+    if (!symlinkCheck.ok) {
+      const result: FsWriteResult = {
+        success: false,
+        path: virtualPath,
+        operation: input.operation,
+        applied: false,
+        error: { code: 'SYMLINK_ESCAPE', message: symlinkCheck.error },
+        hint: 'Symlinks pointing outside the mounted directory are not allowed for security.',
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
     let result: FsWriteResult;
 
     switch (input.operation) {
@@ -778,10 +548,6 @@ Always use dryRun=true first to preview bulk changes.
           createDirs: input.createDirs,
           dryRun: input.dryRun,
         });
-        break;
-
-      case 'delete':
-        result = await deleteFile(absolutePath, virtualPath, input.dryRun);
         break;
 
       case 'update':
@@ -795,7 +561,7 @@ Always use dryRun=true first to preview bulk changes.
           operation: input.operation,
           applied: false,
           error: { code: 'INVALID_OPERATION', message: `Unknown operation: ${input.operation}` },
-          hint: 'Valid operations: create, update, delete',
+          hint: 'Valid operations: create, update',
         };
     }
 
