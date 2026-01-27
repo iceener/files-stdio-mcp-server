@@ -95,92 +95,49 @@ function generateInstructions(mounts: Mount[]): string {
   const firstMount = mounts[0]?.name ?? 'vault';
 
   return `
-You have access to a sandboxed filesystem through this server.
-
-═══════════════════════════════════════════════════════════
-                    MANDATORY RULES
-═══════════════════════════════════════════════════════════
-
-🔍 BEFORE ANSWERING about file contents:
-   - ALWAYS use fs_read to get current content first
-   - NEVER assume or guess file contents from memory
-   - If asked "what's in X?", read X first
-
-✏️ BEFORE MODIFYING (update/replace):
-   1. fs_read the file → get current content + checksum
-   2. Use fs_search to locate content, then identify exact line numbers
-   3. Use dryRun=true to preview the change
-   4. Apply with the checksum from step 1
-   5. Verify the diff in response matches your intent
-
-🗑️ BEFORE DELETING/RENAMING/MOVING/COPYING:
-   1. Use fs_read to confirm important content if needed
-   2. Confirm with user if content looks important
-   3. Use fs_manage for structural changes
-
-📁 BEFORE CREATING:
-   1. fs_read the parent directory to check for conflicts
-   2. Check if similar file already exists
-
-🔄 IF CHECKSUM MISMATCH:
-   - File changed since you read it
-   - Re-read with fs_read to get fresh content
-   - Start modification workflow again
-
-⚠️ NEVER:
-   - Modify a file you haven't read in this conversation
-   - Use line numbers from memory (they may have shifted)
-   - Skip dryRun for destructive operations
-
-═══════════════════════════════════════════════════════════
-                    AVAILABLE PATHS
-═══════════════════════════════════════════════════════════
+Sandboxed filesystem access. Only these paths are available:
 ${mountList}
 
-All paths are relative to these mount points. Examples:
-- "${firstMount}/notes.md" → file in ${firstMount}
-- Use fs_read(".") to list all mount points
+CRITICAL RULES:
+1. ALWAYS fs_read a file BEFORE answering about its contents or modifying it
+2. NEVER guess file contents or line numbers from memory
+3. ALWAYS use dryRun=true first for modifications, then apply with dryRun=false
+4. ALWAYS pass checksum (from fs_read) to fs_write to prevent stale overwrites
 
-═══════════════════════════════════════════════════════════
-                    WORKFLOW PATTERNS
-═══════════════════════════════════════════════════════════
+TOOLS:
+- fs_read: Read files (returns line numbers + checksum) or list directories
+- fs_search: Find files by name and/or search content (returns line numbers)
+- fs_write: Create or update files (line-based targeting)
+- fs_manage: delete, rename, move, copy, mkdir, stat
 
-EXPLORE FIRST:
-  fs_read(".") → see available mounts
-  fs_read("${firstMount}/") → explore a mount
-  fs_search(".", query="config") → find files and content
+MODIFY WORKFLOW:
+1. fs_read("${firstMount}/file.md") → get content, line numbers, checksum
+2. fs_write({ path: "${firstMount}/file.md", operation: "update", action: "replace", lines: "10-15", content: "new text", checksum: "abc123", dryRun: true }) → preview diff
+3. If diff looks correct: repeat with dryRun: false
+4. On CHECKSUM_MISMATCH: re-read file and restart
 
-READ BEFORE EDIT:
-  fs_read("${firstMount}/file.md") → get content + checksum
-  Note the line numbers for precise edits
+CREATE WORKFLOW:
+1. fs_read("${firstMount}/") → check parent directory
+2. fs_write({ path: "${firstMount}/new.md", operation: "create", content: "...", dryRun: true })
+3. If correct: repeat with dryRun: false
 
-SEARCH:
-  fs_search { path: "${firstMount}/", query: "TODO" } → find content
-  fs_search { path: "${firstMount}/", query: "config", target: "filename" } → find files by name
+UPDATE ACTIONS (operation: "update"):
+- action: "replace", lines: "10-15" → replace lines 10-15 with content
+- action: "insert_before", lines: "10" → insert content before line 10
+- action: "insert_after", lines: "10" → insert content after line 10  
+- action: "delete_lines", lines: "10-15" → remove lines 10-15
 
-SAFE EDITING:
-  fs_write with dryRun=true → preview diff
-  fs_write with dryRun=false → apply change
-  Check returned diff to verify
+SEARCH EXAMPLES:
+- fs_search({ path: ".", query: "TODO" }) → search filenames + content
+- fs_search({ path: ".", query: "error|warn", patternMode: "regex" }) → regex OR search
+- fs_search({ path: ".", query: "config", target: "filename" }) → filenames only
 
-MANAGE (STRUCTURE):
-  fs_manage { operation: "rename", path: "${firstMount}/old.md", target: "${firstMount}/new.md" }
-  fs_manage { operation: "move", path: "${firstMount}/a.md", target: "${firstMount}/archive/a.md", force: true }
-  fs_manage { operation: "copy", path: "${firstMount}/a.md", target: "${firstMount}/backup/a.md" }
-  fs_manage { operation: "mkdir", path: "${firstMount}/archive", recursive: true }
-  fs_manage { operation: "delete", path: "${firstMount}/old.md" }
+MANAGE EXAMPLES:
+- fs_manage({ operation: "mkdir", path: "${firstMount}/new-folder", recursive: true })
+- fs_manage({ operation: "move", path: "${firstMount}/a.md", target: "${firstMount}/archive/a.md" })
+- fs_manage({ operation: "delete", path: "${firstMount}/old.md" })
 
-═══════════════════════════════════════════════════════════
-                    CHECKSUMS & SAFETY
-═══════════════════════════════════════════════════════════
-
-Every fs_read returns a checksum. This is your "file version".
-Pass it to fs_write to ensure file hasn't changed.
-If mismatch occurs, re-read to get current state.
-
-LINE NUMBERS:
-- Prefer lines="10-15" when you have line numbers
- - Use fs_search to locate content, then fs_read to get exact line numbers
+START: fs_read(".") to see available mounts
 `.trim();
 }
 

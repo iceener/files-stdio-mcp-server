@@ -252,6 +252,7 @@ async function listMountsOrSingleMount(
     const pagingSuffix = stats.hasMore ? ` — showing ${stats.returned} of ${stats.total}` : '';
     const truncatedSuffix = stats.truncated ? ' — truncated' : '';
 
+    const nextOffset = stats.offset + stats.returned;
     return {
       success: true,
       path: '.',
@@ -263,7 +264,7 @@ async function listMountsOrSingleMount(
         entries.length === 0
           ? 'Directory is empty or all files are ignored.'
           : stats.hasMore
-            ? `Showing contents of "${mount.name}". Use limit/offset to paginate, or mode="tree" for a lightweight structure view.`
+            ? `Showing ${stats.returned} of ${stats.total} items in "${mount.name}". To see more: use offset=${nextOffset}. Or use mode="tree" for structure overview.`
             : `Showing contents of "${mount.name}". Use fs_read on any path to explore deeper or fs_search to locate files/content.`,
     };
   }
@@ -315,6 +316,7 @@ async function listMountsOrSingleMount(
     truncated: false,
   };
 
+  const nextOffset = stats.offset + stats.returned;
   return {
     success: true,
     path: '.',
@@ -323,7 +325,7 @@ async function listMountsOrSingleMount(
     summary: `${mounts.length} mount point(s): ${mountNames}`,
     stats,
     hint: stats.hasMore
-      ? `${mounts.length} mounts available. Use limit/offset to paginate, or fs_read("mountname/") to explore a specific mount.`
+      ? `${mounts.length} mounts available. To see more: use offset=${nextOffset}. Or use fs_read("mountname/") to explore a specific mount.`
       : `${mounts.length} mounts available. Use fs_read("mountname/") to explore a specific mount, or fs_search to locate files/content.`,
   };
 }
@@ -823,6 +825,7 @@ TIPS:
       const pagingSuffix = stats.hasMore ? ` — showing ${stats.returned} of ${stats.total}` : '';
       const truncatedSuffix = stats.truncated ? ' — truncated' : '';
 
+      const nextOffset = stats.offset + stats.returned;
       result = {
         success: true,
         path: input.path,
@@ -834,7 +837,7 @@ TIPS:
           entries.length === 0
             ? 'Directory is empty or all files are ignored.'
             : stats.hasMore
-              ? 'Results are paginated. Use limit/offset to continue, or mode="tree" for a lightweight structure view.'
+              ? `Showing ${stats.returned} of ${stats.total} items. To see more: use offset=${nextOffset}. Or use mode="tree" for structure overview.`
               : `Found ${entries.length} items. Use fs_read on a file path to see its content, or on a subdirectory to explore deeper.`,
       };
     } else if (stat.isFile()) {

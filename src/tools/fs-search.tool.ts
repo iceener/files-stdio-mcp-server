@@ -7,14 +7,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import fuzzysort from 'fuzzysort';
 import { z } from 'zod';
 import {
   createIgnoreMatcherForDir,
   findMatches,
   getMounts,
   isTextFile,
-  type MatchResult,
   matchesGlob,
   matchesType,
   type PatternMode,
@@ -51,20 +49,12 @@ export const fsSearchInputSchema = z
       .default('all')
       .describe('What to search. Default "all" (filename + content).'),
 
-    preview: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        'If true, return lightweight results (per-file match counts only) without context lines.',
-      ),
-
     patternMode: z
       .enum(['literal', 'regex', 'fuzzy'])
       .optional()
       .default('literal')
       .describe(
-        'How to interpret query: "literal" (exact text), "regex" (regular expression, use for OR: "a|b"), ' +
+        'How to interpret query: "literal" (exact text), "regex" (regular expression), ' +
           '"fuzzy" (flexible whitespace). Default "literal".',
       ),
 
@@ -72,9 +62,7 @@ export const fsSearchInputSchema = z
       .boolean()
       .optional()
       .default(false)
-      .describe(
-        'Ignore case in content search (filename search is always case-insensitive). Default false.',
-      ),
+      .describe('Ignore case in content search. Default false.'),
 
     wholeWord: z
       .boolean()
@@ -116,35 +104,7 @@ export const fsSearchInputSchema = z
       .max(1000)
       .optional()
       .default(100)
-      .describe(
-        'Search cap for matches (default 100). Increase this if you need to page deeper results.',
-      ),
-
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
-      .optional()
-      .default(50)
-      .describe('Max results returned per section (default 50).'),
-
-    offset: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .default(0)
-      .describe('Skip the first N results per section (default 0).'),
-
-    context: z
-      .number()
-      .int()
-      .min(0)
-      .max(20)
-      .optional()
-      .default(3)
-      .describe('Context lines for content matches (default 3).'),
+      .describe('Max results to return. Default 100.'),
 
     respectIgnore: z
       .boolean()
@@ -160,57 +120,23 @@ export type FsSearchInput = z.infer<typeof fsSearchInputSchema>;
 // Types
 // ─────────────────────────────────────────────────────────────
 
-interface FilenameMatch {
+interface FileMatch {
+  name: string;
   path: string;
-  score: number;
-  matchIndices: number[];
 }
 
 interface ContentMatch {
-  line: number;
-  endLine: number;
-  matchCount: number;
-  text: string;
-  context: {
-    before: string[];
-    match: string[];
-    after: string[];
-  };
-}
-
-interface ContentFileResult {
   path: string;
-  matches?: ContentMatch[];
-  matchCount?: number;
-}
-
-interface ResultPageInfo {
-  returned: number;
-  total: number;
-  hasMore: boolean;
-}
-
-interface SearchPageInfo {
-  limit: number;
-  offset: number;
-  byFilename: ResultPageInfo;
-  byContent: ResultPageInfo;
+  line: number;
+  text: string;
 }
 
 interface FsSearchResult {
   success: boolean;
   query: string;
-  target: 'all' | 'filename' | 'content';
-  results: {
-    byFilename: FilenameMatch[];
-    byContent: ContentFileResult[];
-  };
-  stats: {
-    filenameMatches: number;
-    contentMatches: number;
-    filesSearched: number;
-  };
-  page?: SearchPageInfo;
+  files: FileMatch[];
+  content?: ContentMatch[];
+  totalCount: number;
   truncated: boolean;
   error?: {
     code: string;
@@ -223,117 +149,9 @@ interface FsSearchResult {
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-const CLUSTER_DISTANCE = 5;
-
 function isRootPath(pathStr: string): boolean {
   const trimmed = pathStr.trim();
   return trimmed === '.' || trimmed === '' || trimmed === '/';
-}
-
-function formatLineWithNumber(lineNum: number, text: string, maxLineNum: number): string {
-  const padding = String(maxLineNum).length;
-  return `${String(lineNum).padStart(padding)}|${text}`;
-}
-
-function buildClusterResult(
-  matches: MatchResult[],
-  content: string,
-  contextLines: number,
-): ContentMatch {
-  const lines = content.split('\n');
-  const firstMatch = matches.at(0);
-  const lastMatch = matches.at(-1);
-
-  if (!firstMatch || !lastMatch) {
-    return {
-      line: 0,
-      endLine: 0,
-      matchCount: 0,
-      text: '',
-      context: { before: [], match: [], after: [] },
-    };
-  }
-
-  // Calculate line ranges
-  const beforeStart = Math.max(1, firstMatch.line - contextLines);
-  const afterEnd = Math.min(lines.length, lastMatch.line + contextLines);
-  const maxLineNum = afterEnd;
-
-  const beforeLines: string[] = [];
-  for (let i = beforeStart; i < firstMatch.line; i++) {
-    beforeLines.push(formatLineWithNumber(i, lines[i - 1] ?? '', maxLineNum));
-  }
-
-  const matchLineTexts: string[] = [];
-  for (let i = firstMatch.line; i <= lastMatch.line; i++) {
-    matchLineTexts.push(formatLineWithNumber(i, lines[i - 1] ?? '', maxLineNum));
-  }
-
-  const afterLines: string[] = [];
-  for (let i = lastMatch.line + 1; i <= afterEnd; i++) {
-    afterLines.push(formatLineWithNumber(i, lines[i - 1] ?? '', maxLineNum));
-  }
-
-  const matchTexts = matches.map((m) => m.text);
-  const uniqueTexts = [...new Set(matchTexts)];
-  const firstText = matchTexts.at(0) ?? '';
-  const firstUnique = uniqueTexts.at(0) ?? '';
-
-  let text: string;
-  if (matches.length === 1) {
-    text = firstText;
-  } else if (uniqueTexts.length === 1) {
-    text = `"${firstUnique}" (×${matches.length} in lines ${firstMatch.line}-${lastMatch.line})`;
-  } else {
-    text = `${matches.length} matches: ${uniqueTexts
-      .slice(0, 3)
-      .map((t) => `"${t}"`)
-      .join(', ')}${uniqueTexts.length > 3 ? '...' : ''}`;
-  }
-
-  return {
-    line: firstMatch.line,
-    endLine: lastMatch.line,
-    matchCount: matches.length,
-    text,
-    context: {
-      before: beforeLines,
-      match: matchLineTexts,
-      after: afterLines,
-    },
-  };
-}
-
-function clusterMatches(
-  matches: MatchResult[],
-  content: string,
-  contextLines: number,
-): ContentMatch[] {
-  if (matches.length === 0) return [];
-
-  const sorted = [...matches].sort((a, b) => a.line - b.line);
-  const first = sorted.at(0);
-  if (!first) return [];
-
-  const clusters: ContentMatch[] = [];
-  let currentCluster: MatchResult[] = [first];
-
-  for (let i = 1; i < sorted.length; i++) {
-    const match = sorted.at(i);
-    const lastInCluster = currentCluster.at(-1);
-    if (!match || !lastInCluster) continue;
-
-    if (match.line - lastInCluster.line <= CLUSTER_DISTANCE) {
-      currentCluster.push(match);
-    } else {
-      clusters.push(buildClusterResult(currentCluster, content, contextLines));
-      currentCluster = [match];
-    }
-  }
-
-  clusters.push(buildClusterResult(currentCluster, content, contextLines));
-
-  return clusters;
 }
 
 function joinVirtualPath(base: string, relative: string): string {
@@ -342,16 +160,8 @@ function joinVirtualPath(base: string, relative: string): string {
   return path.join(base, relative);
 }
 
-function matchFilename(
-  query: string,
-  filename: string,
-): { score: number; matchIndices: number[] } | null {
-  const result = fuzzysort.single(query.toLowerCase(), filename.toLowerCase());
-  if (!result) return null;
-  return { score: result.score, matchIndices: result.indexes ? [...result.indexes] : [] };
-}
-
 async function searchContentInFile(
+  filePath: string,
   content: string,
   query: string,
   options: {
@@ -359,26 +169,39 @@ async function searchContentInFile(
     multiline: boolean;
     wholeWord: boolean;
     caseInsensitive: boolean;
-    context: number;
     maxResults: number;
   },
-): Promise<{ clusters: ContentMatch[]; matchCount: number; error?: string }> {
+): Promise<ContentMatch[]> {
   try {
-    const maxMatches = Math.max(options.maxResults, options.maxResults * 5);
-    const matches = findMatches(content, query, options.patternMode, {
+    const rawMatches = findMatches(content, query, options.patternMode, {
       multiline: options.multiline,
       wholeWord: options.wholeWord,
       caseInsensitive: options.caseInsensitive,
-      maxMatches,
+      maxMatches: options.maxResults,
     });
 
-    const clusters = clusterMatches(matches, content, options.context);
-    const matchCount = clusters.reduce((sum, cluster) => sum + cluster.matchCount, 0);
+    // Dedupe by line (keep first match per line)
+    const seenLines = new Set<number>();
+    const matches: ContentMatch[] = [];
+    const lines = content.split('\n');
 
-    return { clusters, matchCount };
+    for (const match of rawMatches) {
+      if (seenLines.has(match.line)) continue;
+      seenLines.add(match.line);
+
+      matches.push({
+        path: filePath,
+        line: match.line,
+        text: lines[match.line - 1]?.trim() ?? match.text,
+      });
+
+      if (matches.length >= options.maxResults) break;
+    }
+
+    return matches;
   } catch (err) {
     if (err instanceof UnsafeRegexError) {
-      return { clusters: [], matchCount: 0, error: err.message };
+      return [];
     }
     throw err;
   }
@@ -400,34 +223,22 @@ async function searchContentInDirectory(
     multiline: boolean;
     wholeWord: boolean;
     caseInsensitive: boolean;
-    context: number;
     depth: number;
     types?: string[];
     glob?: string;
     exclude?: string[];
     respectIgnore: boolean;
     maxResults: number;
-    remainingResults: number;
-    preview: boolean;
   },
-): Promise<{
-  results: ContentFileResult[];
-  filesSearched: number;
-  matchCount: number;
-  remainingResults: number;
-  truncated: boolean;
-  error?: string;
-}> {
+): Promise<ContentMatch[]> {
   // Phase 1: Collect all files to search
   const filesToSearch: FileToSearch[] = [];
-  let truncatedCollection = false;
   const MAX_FILES_TO_COLLECT = 10_000;
 
   const ignoreMatcher = options.respectIgnore ? await createIgnoreMatcherForDir(absPath) : null;
 
   async function collectFiles(dir: string, relDir: string, currentDepth: number): Promise<void> {
     if (currentDepth > options.depth || filesToSearch.length >= MAX_FILES_TO_COLLECT) {
-      truncatedCollection = filesToSearch.length >= MAX_FILES_TO_COLLECT;
       return;
     }
 
@@ -439,10 +250,7 @@ async function searchContentInDirectory(
     }
 
     for (const item of items) {
-      if (filesToSearch.length >= MAX_FILES_TO_COLLECT) {
-        truncatedCollection = true;
-        break;
-      }
+      if (filesToSearch.length >= MAX_FILES_TO_COLLECT) break;
 
       const itemPath = path.join(dir, item);
       const itemRelPath = relDir ? path.join(relDir, item) : item;
@@ -474,101 +282,39 @@ async function searchContentInDirectory(
   await collectFiles(absPath, '', 1);
 
   // Phase 2: Search files concurrently
-  const results: ContentFileResult[] = [];
-  let filesSearched = 0;
-  let matchCount = 0;
-  let truncated = truncatedCollection;
-  let remainingResults = options.remainingResults;
-  const isPreview = options.preview;
+  const allMatches: ContentMatch[] = [];
 
-  // Process files in batches with concurrency
-  const processFile = async (file: FileToSearch): Promise<ContentFileResult | null> => {
+  const processFile = async (file: FileToSearch): Promise<ContentMatch[]> => {
     try {
       const content = await fs.readFile(file.absPath, 'utf8');
-      const searchResult = await searchContentInFile(content, options.query, {
+      const filePath = joinVirtualPath(virtualPath, file.relPath);
+      return await searchContentInFile(filePath, content, options.query, {
         patternMode: options.patternMode,
         multiline: options.multiline,
         wholeWord: options.wholeWord,
         caseInsensitive: options.caseInsensitive,
-        context: options.context,
         maxResults: options.maxResults,
       });
-
-      if (searchResult.error || searchResult.matchCount === 0) {
-        return null;
-      }
-
-      if (isPreview) {
-        return {
-          path: joinVirtualPath(virtualPath, file.relPath),
-          matchCount: searchResult.matchCount,
-        };
-      }
-
-      if (searchResult.clusters.length === 0) {
-        return null;
-      }
-
-      return {
-        path: joinVirtualPath(virtualPath, file.relPath),
-        matches: searchResult.clusters,
-      };
     } catch {
-      return null;
+      return [];
     }
   };
 
   // Process in concurrent batches
-  for (let i = 0; i < filesToSearch.length && remainingResults > 0; i += SEARCH_CONCURRENCY) {
+  for (let i = 0; i < filesToSearch.length && allMatches.length < options.maxResults; i += SEARCH_CONCURRENCY) {
     const batch = filesToSearch.slice(i, i + SEARCH_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(processFile));
 
-    for (const result of batchResults) {
-      filesSearched++;
-
-      if (!result) continue;
-
-      if (isPreview) {
-        matchCount += result.matchCount ?? 0;
-        results.push(result);
-        remainingResults -= 1;
-        if (remainingResults <= 0) {
-          truncated = true;
-          break;
-        }
-        continue;
+    for (const matches of batchResults) {
+      for (const match of matches) {
+        if (allMatches.length >= options.maxResults) break;
+        allMatches.push(match);
       }
-
-      if (result.matches && result.matches.length > 0) {
-        let fileClusters = result.matches;
-        if (fileClusters.length > remainingResults) {
-          fileClusters = fileClusters.slice(0, remainingResults);
-          truncated = true;
-        }
-
-        remainingResults -= fileClusters.length;
-        matchCount += fileClusters.reduce((sum, cluster) => sum + cluster.matchCount, 0);
-
-        results.push({
-          path: result.path,
-          matches: fileClusters,
-        });
-
-        if (remainingResults <= 0) {
-          truncated = true;
-          break;
-        }
-      }
+      if (allMatches.length >= options.maxResults) break;
     }
   }
 
-  return {
-    results,
-    filesSearched,
-    matchCount,
-    remainingResults,
-    truncated,
-  };
+  return allMatches;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -579,30 +325,25 @@ export const fsSearchTool = {
   name: 'fs_search',
   description: `Find files by name and search file content.
 
-🔍 DEFAULT: target="all" searches BOTH filenames AND content in one call.
+SEARCH MODES:
+- target="filename": Find files by name (fuzzy match)
+- target="content": Search text inside files
+- target="all" (default): Both filename and content search
 
 PATTERN MODES (for content search):
-- literal (default): Exact text match. "foo|bar" finds literal "foo|bar"
-- regex: Regular expression. "foo|bar" finds "foo" OR "bar"
-- fuzzy: Flexible whitespace. "hello  world" matches "hello world"
-
-⚠️ FOR OR SEARCHES: Use patternMode="regex" with "term1|term2"
-
-PAGINATION:
-Use limit/offset to page filename/content results.
-
-PREVIEW:
-Set preview=true to return per-file match counts without context lines.
-
-WORKFLOW:
-1. fs_search to locate files/content
-2. fs_read to inspect matches and get checksum
-3. fs_write to make edits
+- literal (default): Exact text match
+- regex: Regular expression. Use "foo|bar" for OR search
+- fuzzy: Flexible whitespace matching
 
 EXAMPLES:
 - Find files: { path: ".", query: "config" }
 - Search content: { path: ".", query: "TODO", target: "content" }
-- Regex OR search: { path: ".", query: "error|warning", patternMode: "regex" }`,
+- Regex OR: { path: ".", query: "error|warning", patternMode: "regex" }
+
+WORKFLOW:
+1. fs_search to locate files/content
+2. fs_read to inspect matches and get checksum
+3. fs_write to make edits`,
 
   inputSchema: fsSearchInputSchema,
 
@@ -623,11 +364,7 @@ EXAMPLES:
     const input = parsed.data;
     const target = input.target ?? 'all';
     const depth = input.depth ?? 5;
-    const limit = input.limit ?? 50;
-    const offset = input.offset ?? 0;
-    const preview = input.preview ?? false;
-    let filenameTruncated = false;
-    let contentTruncated = false;
+    const maxResults = input.maxResults ?? 100;
 
     // Early validation: check regex safety for content search
     if ((target === 'all' || target === 'content') && input.patternMode === 'regex') {
@@ -636,432 +373,188 @@ EXAMPLES:
         const result: FsSearchResult = {
           success: false,
           query: input.query,
-          target,
-          results: { byFilename: [], byContent: [] },
-          stats: { filenameMatches: 0, contentMatches: 0, filesSearched: 0 },
+          files: [],
+          totalCount: 0,
           truncated: false,
           error: {
             code: 'UNSAFE_REGEX',
             message: `Regex pattern may cause catastrophic backtracking: "${input.query.slice(0, 50)}${input.query.length > 50 ? '...' : ''}"`,
           },
-          hint: 'Simplify your regex pattern. Avoid nested quantifiers like (a+)+, overlapping alternatives, or extremely long patterns.',
+          hint: 'Simplify your regex pattern. Avoid nested quantifiers like (a+)+.',
         };
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
     }
 
-    const results: FsSearchResult = {
-      success: true,
-      query: input.query,
-      target,
-      results: { byFilename: [], byContent: [] },
-      stats: { filenameMatches: 0, contentMatches: 0, filesSearched: 0 },
-      truncated: false,
-      hint: '',
-    };
+    const files: FileMatch[] = [];
+    const content: ContentMatch[] = [];
 
-    // Root path: search across all mounts
+    // Determine search paths
+    let searchPaths: { absPath: string; virtualPath: string }[] = [];
+
     if (isRootPath(input.path)) {
       const mounts = getMounts();
-
-      // Filename search across mounts
-      if (target === 'all' || target === 'filename') {
-        const allFileMatches: FilenameMatch[] = [];
-
-        for (const mount of mounts) {
-          const found = await searchFiles(mount.absolutePath, input.query, {
-            maxResults: input.maxResults,
-            includeDirectories: false,
-            respectIgnore: input.respectIgnore,
-            exclude: input.exclude,
-            maxDepth: depth,
-          });
-
-          for (const item of found) {
-            if (
-              input.types &&
-              input.types.length > 0 &&
-              !matchesType(item.relativePath, input.types)
-            ) {
-              continue;
-            }
-            if (input.glob && !matchesGlob(item.relativePath, input.glob)) {
-              continue;
-            }
-
-            allFileMatches.push({
-              path: joinVirtualPath(mount.name, item.relativePath),
-              score: item.score,
-              matchIndices: item.matchIndices,
-            });
-          }
-        }
-
-        allFileMatches.sort((a, b) => b.score - a.score);
-        if (allFileMatches.length > input.maxResults) {
-          filenameTruncated = true;
-        }
-        results.results.byFilename = allFileMatches.slice(0, input.maxResults);
+      searchPaths = mounts.map((m) => ({ absPath: m.absolutePath, virtualPath: m.name }));
+    } else {
+      const resolved = resolveVirtualPath(input.path);
+      if (!resolved.ok) {
+        const mounts = getMounts();
+        const mountExample = mounts[0]?.name ?? 'vault';
+        const result: FsSearchResult = {
+          success: false,
+          query: input.query,
+          files: [],
+          totalCount: 0,
+          truncated: false,
+          error: { code: 'OUT_OF_SCOPE', message: resolved.error },
+          hint: `Path must be within a mount. Example: "${mountExample}/". Use fs_read(".") to see mounts.`,
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
-      // Content search across mounts
-      if (target === 'all' || target === 'content') {
-        let remainingResults = input.maxResults;
-        let totalFilesSearched = 0;
-        let totalContentMatches = 0;
+      const { absolutePath, virtualPath, mount } = resolved.resolved;
 
-        for (const mount of mounts) {
-          if (remainingResults <= 0) {
-            contentTruncated = true;
-            break;
-          }
-
-          const contentResult = await searchContentInDirectory(mount.absolutePath, mount.name, {
-            query: input.query,
-            patternMode: input.patternMode as PatternMode,
-            multiline: input.multiline,
-            wholeWord: input.wholeWord,
-            caseInsensitive: input.caseInsensitive,
-            context: input.context,
-            depth,
-            types: input.types,
-            glob: input.glob,
-            exclude: input.exclude,
-            respectIgnore: input.respectIgnore,
-            maxResults: input.maxResults,
-            remainingResults,
-            preview,
-          });
-
-          results.results.byContent.push(...contentResult.results);
-          totalFilesSearched += contentResult.filesSearched;
-          totalContentMatches += contentResult.matchCount;
-          remainingResults = contentResult.remainingResults;
-          if (contentResult.truncated) {
-            contentTruncated = true;
-            break;
-          }
-        }
-
-        results.stats.filesSearched = totalFilesSearched;
-        results.stats.contentMatches = totalContentMatches;
+      // Security: Validate symlinks
+      const symlinkCheck = await validatePathChain(absolutePath, mount);
+      if (!symlinkCheck.ok) {
+        const result: FsSearchResult = {
+          success: false,
+          query: input.query,
+          files: [],
+          totalCount: 0,
+          truncated: false,
+          error: { code: 'SYMLINK_ESCAPE', message: symlinkCheck.error },
+          hint: 'Symlinks pointing outside the mounted directory are not allowed.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
-      const finalized = finalizeSearchResults({
-        result: results,
-        limit,
-        offset,
-        filenameTruncated,
-        contentTruncated,
-      });
+      try {
+        await fs.stat(absolutePath);
+      } catch {
+        const result: FsSearchResult = {
+          success: false,
+          query: input.query,
+          files: [],
+          totalCount: 0,
+          truncated: false,
+          error: { code: 'NOT_FOUND', message: `Path does not exist: ${virtualPath}` },
+          hint: 'Use fs_read on the parent directory to see what exists.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
-      return { content: [{ type: 'text', text: JSON.stringify(finalized, null, 2) }] };
-    }
-
-    // Resolve virtual path to real path
-    const resolved = resolveVirtualPath(input.path);
-    if (!resolved.ok) {
-      const mounts = getMounts();
-      const mountExample = mounts[0]?.name ?? 'vault';
-
-      const result: FsSearchResult = {
-        success: false,
-        query: input.query,
-        target,
-        results: { byFilename: [], byContent: [] },
-        stats: { filenameMatches: 0, contentMatches: 0, filesSearched: 0 },
-        truncated: false,
-        error: { code: 'OUT_OF_SCOPE', message: resolved.error },
-        hint: `Path must be within a mount. Example: "${mountExample}/". Use fs_read(".") to see available mounts.`,
-      };
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-
-    const { absolutePath, virtualPath, mount } = resolved.resolved;
-
-    // Security: Validate symlinks don't escape mount
-    const symlinkCheck = await validatePathChain(absolutePath, mount);
-    if (!symlinkCheck.ok) {
-      const result: FsSearchResult = {
-        success: false,
-        query: input.query,
-        target,
-        results: { byFilename: [], byContent: [] },
-        stats: { filenameMatches: 0, contentMatches: 0, filesSearched: 0 },
-        truncated: false,
-        error: { code: 'SYMLINK_ESCAPE', message: symlinkCheck.error },
-        hint: 'Symlinks pointing outside the mounted directory are not allowed for security.',
-      };
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-
-    let stat: Awaited<ReturnType<typeof fs.stat>>;
-    try {
-      stat = await fs.stat(absolutePath);
-    } catch {
-      const result: FsSearchResult = {
-        success: false,
-        query: input.query,
-        target,
-        results: { byFilename: [], byContent: [] },
-        stats: { filenameMatches: 0, contentMatches: 0, filesSearched: 0 },
-        truncated: false,
-        error: { code: 'NOT_FOUND', message: `Path does not exist: ${virtualPath}` },
-        hint: 'Use fs_read on the parent directory to see what exists, or fs_search from a higher-level directory.',
-      };
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    }
-
-    if (input.exclude && shouldExclude(virtualPath, input.exclude)) {
-      results.hint = 'Path excluded by exclude patterns.';
-      return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+      searchPaths = [{ absPath: absolutePath, virtualPath }];
     }
 
     // Filename search
     if (target === 'all' || target === 'filename') {
-      if (stat.isDirectory()) {
-        const found = await searchFiles(absolutePath, input.query, {
-          maxResults: input.maxResults,
+      for (const { absPath, virtualPath } of searchPaths) {
+        if (files.length >= maxResults) break;
+
+        const found = await searchFiles(absPath, input.query, {
+          maxResults: maxResults - files.length,
           includeDirectories: false,
           respectIgnore: input.respectIgnore,
           exclude: input.exclude,
           maxDepth: depth,
         });
 
-        const filtered = found
-          .filter((item) => {
-            if (
-              input.types &&
-              input.types.length > 0 &&
-              !matchesType(item.relativePath, input.types)
-            ) {
-              return false;
-            }
-            if (input.glob && !matchesGlob(item.relativePath, input.glob)) {
-              return false;
-            }
-            return true;
-          })
-          .map((item) => ({
-            path: joinVirtualPath(virtualPath, item.relativePath),
-            score: item.score,
-            matchIndices: item.matchIndices,
-          }));
+        for (const item of found) {
+          if (files.length >= maxResults) break;
 
-        if (filtered.length >= input.maxResults) {
-          filenameTruncated = true;
-        }
+          if (input.types?.length && !matchesType(item.relativePath, input.types)) continue;
+          if (input.glob && !matchesGlob(item.relativePath, input.glob)) continue;
 
-        results.results.byFilename = filtered.slice(0, input.maxResults);
-      } else if (stat.isFile()) {
-        const fileName = path.basename(virtualPath);
-        if (input.types && input.types.length > 0 && !matchesType(fileName, input.types)) {
-          // skip
-        } else if (input.glob && !matchesGlob(virtualPath, input.glob)) {
-          // skip
-        } else {
-          const matched = matchFilename(input.query, fileName);
-          if (matched) {
-            results.results.byFilename = [
-              {
-                path: virtualPath,
-                score: matched.score,
-                matchIndices: matched.matchIndices,
-              },
-            ];
-          }
+          const fullPath = joinVirtualPath(virtualPath, item.relativePath);
+          files.push({
+            name: path.basename(item.relativePath),
+            path: fullPath,
+          });
         }
       }
     }
 
     // Content search
     if (target === 'all' || target === 'content') {
-      if (stat.isDirectory()) {
-        const contentResult = await searchContentInDirectory(absolutePath, virtualPath, {
+      for (const { absPath, virtualPath } of searchPaths) {
+        if (content.length >= maxResults) break;
+
+        const matches = await searchContentInDirectory(absPath, virtualPath, {
           query: input.query,
           patternMode: input.patternMode as PatternMode,
           multiline: input.multiline,
           wholeWord: input.wholeWord,
           caseInsensitive: input.caseInsensitive,
-          context: input.context,
           depth,
           types: input.types,
           glob: input.glob,
           exclude: input.exclude,
           respectIgnore: input.respectIgnore,
-          maxResults: input.maxResults,
-          remainingResults: input.maxResults,
-          preview,
+          maxResults: maxResults - content.length,
         });
 
-        results.results.byContent = contentResult.results;
-        results.stats.filesSearched = contentResult.filesSearched;
-        results.stats.contentMatches = contentResult.matchCount;
-        if (contentResult.truncated) {
-          contentTruncated = true;
-        }
-      } else if (stat.isFile()) {
-        if (!isTextFile(absolutePath)) {
-          results.success = false;
-          results.error = { code: 'NOT_TEXT', message: 'Cannot search in binary files' };
-          results.hint = 'Only text files can be searched.';
-          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
-        }
-
-        if (
-          input.types &&
-          input.types.length > 0 &&
-          !matchesType(path.basename(virtualPath), input.types)
-        ) {
-          // skip
-        } else if (input.glob && !matchesGlob(virtualPath, input.glob)) {
-          // skip
-        } else {
-          const content = await fs.readFile(absolutePath, 'utf8');
-          const { clusters, matchCount } = await searchContentInFile(content, input.query, {
-            patternMode: input.patternMode as PatternMode,
-            multiline: input.multiline,
-            wholeWord: input.wholeWord,
-            caseInsensitive: input.caseInsensitive,
-            context: input.context,
-            maxResults: input.maxResults,
-          });
-
-          if (preview) {
-            results.results.byContent =
-              matchCount > 0
-                ? [
-                    {
-                      path: virtualPath,
-                      matchCount,
-                    },
-                  ]
-                : [];
-            results.stats.filesSearched = 1;
-            results.stats.contentMatches = matchCount;
-          } else {
-            let fileClusters = clusters;
-            if (clusters.length > input.maxResults) {
-              fileClusters = clusters.slice(0, input.maxResults);
-              contentTruncated = true;
-            }
-
-            const trimmedMatchCount = fileClusters.reduce(
-              (sum, cluster) => sum + cluster.matchCount,
-              0,
-            );
-
-            results.results.byContent =
-              fileClusters.length > 0
-                ? [
-                    {
-                      path: virtualPath,
-                      matches: fileClusters,
-                    },
-                  ]
-                : [];
-            results.stats.filesSearched = 1;
-            results.stats.contentMatches = trimmedMatchCount;
-          }
+        for (const match of matches) {
+          if (content.length >= maxResults) break;
+          content.push(match);
         }
       }
     }
 
-    const finalized = finalizeSearchResults({
-      result: results,
-      limit,
-      offset,
-      filenameTruncated,
-      contentTruncated,
-    });
+    // Check if results were truncated
+    const truncated = files.length >= maxResults || content.length >= maxResults;
+    const totalCount = files.length + content.length;
 
-    return { content: [{ type: 'text', text: JSON.stringify(finalized, null, 2) }] };
+    // Build result
+    const result: FsSearchResult = {
+      success: true,
+      query: input.query,
+      files,
+      totalCount,
+      truncated,
+      hint: buildHint(target, files.length, content.length, truncated, maxResults),
+    };
+
+    if (target === 'all' || target === 'content') {
+      result.content = content;
+    }
+
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   },
 };
 
-function paginateList<T>(
-  items: T[],
-  limit: number,
-  offset: number,
-): ResultPageInfo & { items: T[] } {
-  const safeOffset = Math.max(0, offset);
-  const safeLimit = Math.max(1, limit);
-  const total = items.length;
-  const pagedItems = items.slice(safeOffset, safeOffset + safeLimit);
-  return {
-    items: pagedItems,
-    returned: pagedItems.length,
-    total,
-    hasMore: total > safeOffset + pagedItems.length,
-  };
-}
+function buildHint(
+  target: string,
+  fileCount: number,
+  contentCount: number,
+  truncated: boolean,
+  maxResults: number,
+): string {
+  const parts: string[] = [];
 
-function finalizeSearchResults(options: {
-  result: FsSearchResult;
-  limit: number;
-  offset: number;
-  filenameTruncated: boolean;
-  contentTruncated: boolean;
-}): FsSearchResult {
-  const { result, limit, offset, filenameTruncated, contentTruncated } = options;
-  const filenamePage = paginateList(result.results.byFilename, limit, offset);
-  const contentPage = paginateList(result.results.byContent, limit, offset);
-
-  result.results.byFilename = filenamePage.items;
-  result.results.byContent = contentPage.items;
-  result.page = {
-    limit,
-    offset,
-    byFilename: {
-      returned: filenamePage.returned,
-      total: filenamePage.total,
-      hasMore: filenamePage.hasMore || filenameTruncated,
-    },
-    byContent: {
-      returned: contentPage.returned,
-      total: contentPage.total,
-      hasMore: contentPage.hasMore || contentTruncated,
-    },
-  };
-  result.stats.filenameMatches = filenamePage.total;
-  result.truncated = filenameTruncated || contentTruncated;
-  result.hint = buildSearchHint(result);
-  return result;
-}
-
-function buildSearchHint(result: FsSearchResult): string {
-  const filenameMatches = result.page?.byFilename.total ?? result.results.byFilename.length;
-  const contentFileCount = result.page?.byContent.total ?? result.results.byContent.length;
-  const contentMatches = result.stats.contentMatches;
-  const pageInfo = result.page;
-
-  let hint = '';
-  if (result.target === 'filename') {
-    hint = filenameMatches
-      ? `Found ${filenameMatches} filename match(es).`
-      : 'No filename matches found.';
-  } else if (result.target === 'content') {
-    hint = contentMatches
-      ? `Found ${contentMatches} content match(es) in ${contentFileCount} file(s).`
-      : 'No content matches found.';
+  // What we found
+  if (target === 'filename') {
+    parts.push(fileCount > 0 ? `Found ${fileCount} file(s).` : 'No files found.');
+  } else if (target === 'content') {
+    parts.push(contentCount > 0 ? `Found ${contentCount} content match(es).` : 'No content matches found.');
   } else {
-    const filenameHint = filenameMatches
-      ? `${filenameMatches} filename match(es)`
-      : 'no filename matches';
-    const contentHint = contentMatches
-      ? `${contentMatches} content match(es) in ${contentFileCount} file(s)`
-      : 'no content matches';
-    hint = `Found ${filenameHint} and ${contentHint}.`;
+    const filePart = fileCount > 0 ? `${fileCount} file(s)` : 'no files';
+    const contentPart = contentCount > 0 ? `${contentCount} content match(es)` : 'no content matches';
+    parts.push(`Found ${filePart} and ${contentPart}.`);
   }
 
-  if (pageInfo && (pageInfo.byFilename.hasMore || pageInfo.byContent.hasMore)) {
-    hint += ` Showing ${pageInfo.byFilename.returned}/${filenameMatches} filename match(es) and ${pageInfo.byContent.returned}/${contentFileCount} file match(es). Use limit/offset to paginate.`;
+  // Truncation warning with explicit guidance
+  if (truncated) {
+    const suggestedMax = Math.min(maxResults * 2, 1000);
+    parts.push(
+      `Results limited to ${maxResults}. To see more: use maxResults=${suggestedMax}, or narrow search with types/glob/exclude filters.`,
+    );
   }
 
-  if (result.truncated) {
-    hint +=
-      ' Results truncated — narrow the path, add types/glob filters, or use preview=true for lighter output.';
+  // Next step guidance
+  if (fileCount > 0 || contentCount > 0) {
+    parts.push('Use fs_read on a specific path to see full content and get checksum for editing.');
   }
 
-  return hint;
+  return parts.join(' ');
 }

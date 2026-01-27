@@ -80,9 +80,9 @@ describe('fs_write: create operation', () => {
 
     expect(result.success).toBe(true);
 
-    // Verify file exists
+    // Verify file exists (with trailing newline - default behavior)
     const content = await fs.readFile(path.join(TEST_DIR, 'deep/nested/path/file.md'), 'utf8');
-    expect(content).toBe('Nested content');
+    expect(content).toBe('Nested content\n');
   });
 
   test('fails if file already exists', async () => {
@@ -146,7 +146,7 @@ describe('fs_write: update operation - line-based', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'update-test.md'), 'utf8');
-    expect(content).toBe('line1\nline2\nREPLACED\nline4\nline5');
+    expect(content).toBe('line1\nline2\nREPLACED\nline4\nline5\n');
   });
 
   test('replaces line range', async () => {
@@ -161,7 +161,7 @@ describe('fs_write: update operation - line-based', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'update-test.md'), 'utf8');
-    expect(content).toBe('line1\nNEW\nline5');
+    expect(content).toBe('line1\nNEW\nline5\n');
   });
 
   test('inserts before line', async () => {
@@ -176,7 +176,7 @@ describe('fs_write: update operation - line-based', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'update-test.md'), 'utf8');
-    expect(content).toBe('line1\nline2\nINSERTED\nline3\nline4\nline5');
+    expect(content).toBe('line1\nline2\nINSERTED\nline3\nline4\nline5\n');
   });
 
   test('inserts after line', async () => {
@@ -191,7 +191,7 @@ describe('fs_write: update operation - line-based', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'update-test.md'), 'utf8');
-    expect(content).toBe('line1\nline2\nline3\nINSERTED\nline4\nline5');
+    expect(content).toBe('line1\nline2\nline3\nINSERTED\nline4\nline5\n');
   });
 
   test('deletes lines', async () => {
@@ -205,7 +205,7 @@ describe('fs_write: update operation - line-based', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'update-test.md'), 'utf8');
-    expect(content).toBe('line1\nline5');
+    expect(content).toBe('line1\nline5\n');
   });
 });
 
@@ -302,13 +302,13 @@ describe('fs_write: edge cases', () => {
       content: '',
     });
 
-    // Should succeed - empty files are valid
+    // Should succeed - empty files are valid (but get trailing newline)
     if (!result.success) {
       // If it fails due to validation, that's also acceptable behavior
       expect(result.error).toBeDefined();
     } else {
       const content = await fs.readFile(path.join(TEST_DIR, 'empty.md'), 'utf8');
-      expect(content).toBe('');
+      expect(content).toBe('\n'); // Empty content still gets trailing newline
     }
   });
 
@@ -326,7 +326,7 @@ describe('fs_write: edge cases', () => {
     expect(result.success).toBe(true);
 
     const content = await fs.readFile(path.join(TEST_DIR, 'multiline.md'), 'utf8');
-    expect(content).toBe('line1\nline2\nline3');
+    expect(content).toBe('line1\nline2\nline3\n');
   });
 
   test('update fails for non-existent file', async () => {

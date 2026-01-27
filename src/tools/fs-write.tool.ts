@@ -98,13 +98,6 @@ export const fsWriteInputSchema = z
       .default(true)
       .describe('For create: whether to create parent directories if missing. Default true.'),
 
-    ensureTrailingNewline: z
-      .boolean()
-      .optional()
-      .default(true)
-      .describe(
-        'Ensure file ends with a newline after write. Default true (POSIX convention, reduces git noise).',
-      ),
   })
   .passthrough() // Allow extra keys from SDK context
   .refine(
@@ -158,21 +151,30 @@ export type FsWriteInput = z.infer<typeof fsWriteInputSchema>;
 // Types
 // ─────────────────────────────────────────────────────────────
 
+type FsWriteStatus = 'applied' | 'preview' | 'error';
+
+interface FsWriteResultCreate {
+  action: 'created' | 'would_create';
+  newChecksum?: string;
+  diff: string;
+}
+
+interface FsWriteResultUpdate {
+  action: string;
+  targetRange: { start: number; end: number };
+  newChecksum?: string;
+  diff: string;
+}
+
 interface FsWriteResult {
-  success: boolean;
+  status: FsWriteStatus;
   path: string;
   operation: 'create' | 'update';
-  applied: boolean;
-  result?: {
-    action: string;
-    linesAffected?: number;
-    newChecksum?: string;
-    diff?: string;
-  };
+  result?: FsWriteResultCreate | FsWriteResultUpdate;
   error?: {
     code: string;
     message: string;
-    recoveryHint?: string;
+    recoveryHint: string;
   };
   hint: string;
 }
@@ -203,40 +205,38 @@ async function createFile(
   absPath: string,
   relativePath: string,
   content: string,
-  options: { createDirs: boolean; dryRun: boolean; ensureTrailingNewline: boolean },
+  options: { createDirs: boolean; dryRun: boolean },
 ): Promise<FsWriteResult> {
   // Check if exists
   if (await fileExists(absPath)) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'create',
-      applied: false,
       error: {
         code: 'ALREADY_EXISTS',
         message: `File already exists: ${relativePath}`,
-        recoveryHint: 'Use operation="update" to modify existing files.',
+        recoveryHint:
+          'To modify this file, first call fs_read to get its content and checksum, then use fs_write with operation="update".',
       },
-      hint: 'File already exists. Use fs_write with operation="update" to modify it, or choose a different path.',
+      hint: 'File already exists. Read it first with fs_read, then use operation="update" to modify.',
     };
   }
 
-  // Normalize trailing newline
-  const finalContent = withTrailingNewline(content, options.ensureTrailingNewline);
+  // Normalize trailing newline (POSIX convention)
+  const finalContent = withTrailingNewline(content, true);
+  const diff = generateDiff('', finalContent, relativePath);
 
   if (options.dryRun) {
-    const diff = generateDiff('', finalContent, relativePath);
     return {
-      success: true,
+      status: 'preview',
       path: relativePath,
       operation: 'create',
-      applied: false,
       result: {
         action: 'would_create',
-        linesAffected: finalContent.split('\n').length,
         diff,
       },
-      hint: 'DRY RUN — file would be created with the content shown. Run with dryRun=false to apply.',
+      hint: 'DRY RUN: Review the diff above. If the content is correct, call fs_write again with dryRun=false to create the file.',
     };
   }
 
@@ -249,16 +249,15 @@ async function createFile(
   const newChecksum = generateChecksum(finalContent);
 
   return {
-    success: true,
+    status: 'applied',
     path: relativePath,
     operation: 'create',
-    applied: true,
     result: {
       action: 'created',
-      linesAffected: finalContent.split('\n').length,
       newChecksum,
+      diff,
     },
-    hint: `File created successfully. New checksum: ${newChecksum}. Use fs_read to verify the content.`,
+    hint: `File created at "${relativePath}". Checksum: ${newChecksum}. Use this checksum when updating the file.`,
   };
 }
 
@@ -270,31 +269,31 @@ async function updateFile(
   // Check exists
   if (!(await fileExists(absPath))) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'NOT_FOUND',
         message: `File does not exist: ${relativePath}`,
-        recoveryHint: 'Use operation="create" to create a new file.',
+        recoveryHint:
+          'Use fs_write with operation="create" and provide the content to create a new file.',
       },
-      hint: 'File not found. Use fs_write with operation="create" to create it.',
+      hint: 'File not found. To create it, use operation="create" with the desired content.',
     };
   }
 
   // Check text file
   if (!isTextFile(absPath)) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'NOT_TEXT',
         message: 'Cannot modify binary files',
+        recoveryHint: 'This file appears to be binary. Only text files can be edited.',
       },
-      hint: 'Only text files can be modified.',
+      hint: 'Binary files cannot be modified. Only text files are supported.',
     };
   }
 
@@ -305,30 +304,30 @@ async function updateFile(
   // Verify checksum if provided
   if (input.checksum && input.checksum !== currentChecksum) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'CHECKSUM_MISMATCH',
-        message: `File has changed. Expected: ${input.checksum}, actual: ${currentChecksum}`,
-        recoveryHint: 'Re-read the file to get the current content and checksum.',
+        message: `File has changed since last read. Expected checksum: ${input.checksum}, current: ${currentChecksum}`,
+        recoveryHint: `Call fs_read("${relativePath}") to get the current content and updated checksum, then retry.`,
       },
-      hint: `Checksum mismatch — file changed since your last read. Use fs_read to get current content and new checksum (${currentChecksum}).`,
+      hint: `File was modified externally. Re-read with fs_read to get current checksum (${currentChecksum}).`,
     };
   }
 
   if (!input.lines) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'NO_TARGET',
-        message: '"lines" must be specified for update',
+        message: '"lines" parameter is required for update operations',
+        recoveryHint:
+          'Add lines="N" or lines="N-M" to specify which lines to target. Get line numbers from fs_read output.',
       },
-      hint: 'Specify lines="10-15" to target content for modification.',
+      hint: 'Missing target lines. Use fs_read to view the file with line numbers, then specify lines="10" or lines="10-15".',
     };
   }
 
@@ -336,30 +335,30 @@ async function updateFile(
   const range = parseLineRange(input.lines);
   if (!range) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'INVALID_RANGE',
-        message: `Invalid line range: ${input.lines}`,
+        message: `Invalid line range format: "${input.lines}"`,
+        recoveryHint: 'Use format "10" for single line or "10-15" for a range (inclusive).',
       },
-      hint: 'Line range format: "10" for single line, "10-15" for range.',
+      hint: 'Invalid line range. Use "10" for single line, "10-15" for range.',
     };
   }
 
   const lines = currentContent.split('\n');
   if (range.start > lines.length) {
     return {
-      success: false,
+      status: 'error',
       path: relativePath,
       operation: 'update',
-      applied: false,
       error: {
         code: 'OUT_OF_RANGE',
-        message: `Line ${range.start} is beyond file end (${lines.length} lines)`,
+        message: `Line ${range.start} is beyond file end (file has ${lines.length} lines)`,
+        recoveryHint: `Adjust your line range to be within 1-${lines.length}. Use fs_read to see the file content.`,
       },
-      hint: `File has ${lines.length} lines. Adjust your line range.`,
+      hint: `File has ${lines.length} lines. Target lines must be within 1-${lines.length}.`,
     };
   }
 
@@ -369,7 +368,6 @@ async function updateFile(
   // Apply action
   let newContent: string;
   let actionDescription: string;
-  let linesAffected: number;
 
   // Content is guaranteed by Zod schema for non-delete actions
   const content = input.content ?? '';
@@ -378,59 +376,55 @@ async function updateFile(
     case 'replace':
       newContent = replaceLines(currentContent, targetStart, targetEnd, content);
       actionDescription = 'replaced';
-      linesAffected = targetEnd - targetStart + 1;
       break;
 
     case 'insert_before':
       newContent = insertBeforeLine(currentContent, targetStart, content);
       actionDescription = 'inserted_before';
-      linesAffected = content.split('\n').length;
       break;
 
     case 'insert_after':
       newContent = insertAfterLine(currentContent, targetEnd, content);
       actionDescription = 'inserted_after';
-      linesAffected = content.split('\n').length;
       break;
 
     case 'delete_lines':
       newContent = deleteLines(currentContent, targetStart, targetEnd);
       actionDescription = 'deleted_lines';
-      linesAffected = targetEnd - targetStart + 1;
       break;
 
     default:
       return {
-        success: false,
+        status: 'error',
         path: relativePath,
         operation: 'update',
-        applied: false,
         error: {
           code: 'INVALID_ACTION',
           message: `Unknown action: ${input.action}`,
+          recoveryHint:
+            'Use one of: action="replace", action="insert_before", action="insert_after", action="delete_lines".',
         },
-        hint: 'Valid actions: replace, insert_before, insert_after, delete_lines',
+        hint: 'Invalid action. Valid options: replace, insert_before, insert_after, delete_lines.',
       };
   }
 
-  // Normalize trailing newline
-  const finalContent = withTrailingNewline(newContent, input.ensureTrailingNewline);
+  // Normalize trailing newline (POSIX convention)
+  const finalContent = withTrailingNewline(newContent, true);
 
   // Generate diff
   const diff = generateDiff(currentContent, finalContent, relativePath);
 
   if (input.dryRun) {
     return {
-      success: true,
+      status: 'preview',
       path: relativePath,
       operation: 'update',
-      applied: false,
       result: {
         action: `would_${actionDescription}`,
-        linesAffected,
+        targetRange: { start: targetStart, end: targetEnd },
         diff,
       },
-      hint: 'DRY RUN — no changes applied. Review the diff above. Run with dryRun=false to apply.',
+      hint: `DRY RUN: Review the diff above. If the changes match your intent, call fs_write again with dryRun=false to apply.`,
     };
   }
 
@@ -439,17 +433,16 @@ async function updateFile(
   const newChecksum = generateChecksum(finalContent);
 
   return {
-    success: true,
+    status: 'applied',
     path: relativePath,
     operation: 'update',
-    applied: true,
     result: {
       action: actionDescription,
-      linesAffected,
+      targetRange: { start: targetStart, end: targetEnd },
       newChecksum,
       diff,
     },
-    hint: `${actionDescription.replace('_', ' ')} ${linesAffected} line(s). New checksum: ${newChecksum}. The diff above shows what changed.`,
+    hint: `Updated "${relativePath}": ${actionDescription.replace('_', ' ')} lines ${targetStart}-${targetEnd}. New checksum: ${newChecksum}.`,
   };
 }
 
@@ -532,16 +525,17 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
       const isAbsolute = input.path.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(input.path);
 
       const result: FsWriteResult = {
-        success: false,
+        status: 'error',
         path: input.path,
         operation: input.operation,
-        applied: false,
-        error: { code: 'OUT_OF_SCOPE', message: resolved.error },
+        error: {
+          code: 'OUT_OF_SCOPE',
+          message: resolved.error,
+          recoveryHint: `Use fs_read(".") to see available mounts, then use a path like "${mountExample}/filename.ext".`,
+        },
         hint: isAbsolute
-          ? `This is a SANDBOXED filesystem — you cannot write to arbitrary system paths. ` +
-            `Use fs_read(".") first to see available mounts, then write to paths like "${mountExample}/file.md".`
-          : `Path must be within a mount. Example: "${mountExample}/file.md". ` +
-            `Use fs_read(".") to see available mounts.`,
+          ? `SANDBOXED filesystem — cannot write to system paths. Call fs_read(".") first to see available mounts.`
+          : `Path must be within a mount. Call fs_read(".") to see available mounts.`,
       };
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
@@ -552,12 +546,15 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
     const symlinkCheck = await validatePathChain(absolutePath, mount);
     if (!symlinkCheck.ok) {
       const result: FsWriteResult = {
-        success: false,
+        status: 'error',
         path: virtualPath,
         operation: input.operation,
-        applied: false,
-        error: { code: 'SYMLINK_ESCAPE', message: symlinkCheck.error },
-        hint: 'Symlinks pointing outside the mounted directory are not allowed for security.',
+        error: {
+          code: 'SYMLINK_ESCAPE',
+          message: symlinkCheck.error,
+          recoveryHint: 'Remove or update the symlink to point within the mounted directory.',
+        },
+        hint: 'Security: symlinks cannot point outside the mounted directory.',
       };
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
@@ -570,7 +567,6 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
         result = await createFile(absolutePath, virtualPath, input.content ?? '', {
           createDirs: input.createDirs,
           dryRun: input.dryRun,
-          ensureTrailingNewline: input.ensureTrailingNewline,
         });
         break;
 
@@ -580,12 +576,15 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
 
       default:
         result = {
-          success: false,
+          status: 'error',
           path: virtualPath,
           operation: input.operation,
-          applied: false,
-          error: { code: 'INVALID_OPERATION', message: `Unknown operation: ${input.operation}` },
-          hint: 'Valid operations: create, update',
+          error: {
+            code: 'INVALID_OPERATION',
+            message: `Unknown operation: ${input.operation}`,
+            recoveryHint: 'Use operation="create" for new files or operation="update" for existing files.',
+          },
+          hint: 'Invalid operation. Use "create" for new files, "update" for existing files.',
         };
     }
 
