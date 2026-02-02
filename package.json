@@ -31,7 +31,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.1",
+    "@modelcontextprotocol/sdk": "^1.24.3",
     "diff": "^8.0.3",
     "escape-string-regexp": "^5.0.0",
     "fast-glob": "^3.3.3",

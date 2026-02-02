@@ -233,8 +233,7 @@ Find files by name and search content within files.
   glob?: string;
   exclude?: string[];
   depth?: number;                 // Default 5
-  maxResults?: number;            // Default 100
-  context?: number;               // Default 3
+  maxResults?: number;            // Default 100, max 1000
   respectIgnore?: boolean;
 }
 ```
@@ -244,18 +243,12 @@ Find files by name and search content within files.
 {
   success: boolean;
   query: string;
-  target: "all" | "filename" | "content";
-  results: {
-    byFilename: Array<{ path, score, matchIndices }>;
-    byContent: Array<{ path, matches: Array<{ line, endLine, matchCount, text, context }> }>;
-  };
-  stats: {
-    filenameMatches: number;
-    contentMatches: number;
-    filesSearched: number;
-  };
-  truncated: boolean;
-  hint: string;
+  files: Array<{ name: string; path: string }>;        // Filename matches
+  content?: Array<{ path: string; line: number; text: string }>;  // Content matches
+  totalCount: number;
+  truncated: boolean;          // True if maxResults cap was hit
+  error?: { code: string; message: string };
+  hint: string;                // Actionable guidance
 }
 ```
 
@@ -289,25 +282,24 @@ Create or update files with safety features.
 **Output:**
 ```ts
 {
-  success: boolean;
+  status: "applied" | "preview" | "error";
   path: string;
   operation: "create" | "update";
-  applied: boolean;
   
   result?: {
-    action: string;
-    linesAffected?: number;
-    newChecksum?: string;
+    action: string;              // "created", "would_create", "replaced", etc.
+    targetRange?: { start: number; end: number };  // For updates
+    newChecksum?: string;        // After apply
     diff?: string;               // Unified diff
   };
   
   error?: {
     code: string;
     message: string;
-    recoveryHint?: string;
+    recoveryHint: string;        // Always present on errors
   };
   
-  hint: string;
+  hint: string;                  // Actionable guidance
 }
 ```
 
@@ -321,9 +313,12 @@ Structural filesystem operations.
   operation: "delete" | "rename" | "move" | "copy" | "mkdir" | "stat";
   path: string;
   target?: string;                 // rename/move/copy
-  recursive?: boolean;             // directory ops (default false)
+  recursive?: boolean;             // mkdir/copy/move only (default false)
   force?: boolean;                 // overwrite (default false)
 }
+```
+
+> **Note:** Delete only works on single files or empty directories (no recursive delete for safety).
 ```
 
 **Output:**
@@ -595,7 +590,7 @@ src/
 | "SANDBOXED FILESYSTEM: Absolute paths not allowed" | Use relative paths within mounts. Start with `fs_read(".")` to see available mounts. |
 | "Path does not match any mount" | Check `FS_ROOTS` is set correctly. Paths must start with a mount name (e.g., `vault/notes.md`). |
 | "CHECKSUM_MISMATCH" | File changed since you read it. Re-read with `fs_read` to get fresh content. |
-| "DIRECTORY_NOT_EMPTY" | Directory operations need `recursive=true` for delete/move/copy. |
+| "DIRECTORY_NOT_EMPTY" | Delete only works on empty directories. For move/copy, use `recursive=true`. |
 | "ALREADY_EXISTS" | Target already exists. Use `force=true` where supported. |
 | Binary file errors | Only text files can be read/written. Check file extension. |
 | Single mount still shows "docs" | Restart the MCP server after changing `FS_ROOTS`. |
