@@ -4,5 +4,6 @@ dist/
 .DS_Store
 *.lock
 *.lockb
+wrangler.toml
 
 .env
