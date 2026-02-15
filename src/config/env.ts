@@ -28,6 +28,15 @@ export interface Config {
   // Filesystem
   readonly MOUNTS: Mount[];
   readonly MAX_FILE_SIZE: number;
+
+  /**
+   * Relative paths (within mounts) that should always be visible,
+   * even if matched by .gitignore, DEFAULT_IGNORE, or ALWAYS_EXCLUDE.
+   *
+   * Set via FS_INCLUDE env var (comma-separated).
+   * Paths are recursive — including "data" also includes "data/sub/deep".
+   */
+  readonly INCLUDE_PATHS: readonly string[];
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {
@@ -141,8 +150,25 @@ START: fs_read(".") to see available mounts
 `.trim();
 }
 
+/**
+ * Parse FS_INCLUDE into relative path prefixes that override ignore rules.
+ * Format: comma-separated relative paths, e.g. "data,build/output"
+ */
+function parseIncludePaths(): string[] {
+  const raw = process.env['FS_INCLUDE'] ?? '';
+  return raw
+    .split(',')
+    .map((p) => p.trim().replace(/^\/+/, '').replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
 function loadConfig(): Config {
   const mounts = parseMounts();
+  const includePaths = parseIncludePaths();
+
+  if (includePaths.length > 0) {
+    console.error('[files-mcp] FS_INCLUDE:', includePaths.join(', '));
+  }
 
   return {
     NAME: process.env['MCP_NAME'] ?? 'files-mcp',
@@ -153,6 +179,7 @@ function loadConfig(): Config {
 
     MOUNTS: mounts,
     MAX_FILE_SIZE: parseInt(process.env['MAX_FILE_SIZE'] ?? '1048576', 10), // 1MB default
+    INCLUDE_PATHS: includePaths,
   };
 }
 

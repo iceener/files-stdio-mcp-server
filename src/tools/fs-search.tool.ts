@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { config } from '../config/env.js';
 import {
   createIgnoreMatcherForDir,
   findMatches,
@@ -238,7 +239,9 @@ async function searchContentInDirectory(
   const filesToSearch: FileToSearch[] = [];
   const MAX_FILES_TO_COLLECT = 10_000;
 
-  const ignoreMatcher = options.respectIgnore ? await createIgnoreMatcherForDir(absPath) : null;
+  const ignoreMatcher = options.respectIgnore
+    ? await createIgnoreMatcherForDir(absPath, config.INCLUDE_PATHS)
+    : null;
 
   async function collectFiles(dir: string, relDir: string, currentDepth: number): Promise<void> {
     if (currentDepth > options.depth || filesToSearch.length >= MAX_FILES_TO_COLLECT) {
@@ -461,6 +464,7 @@ WORKFLOW:
           respectIgnore: input.respectIgnore,
           exclude: input.exclude,
           maxDepth: depth,
+          includePaths: config.INCLUDE_PATHS,
         });
 
         for (const item of found) {

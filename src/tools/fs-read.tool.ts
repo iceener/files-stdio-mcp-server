@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { config } from '../config/env.js';
 import {
   addLineNumbers,
   createIgnoreMatcherForDir,
@@ -359,7 +360,9 @@ async function listDirectory(
   const limit = Math.max(1, options.limit);
   const offset = Math.max(0, options.offset);
 
-  const ignoreMatcher = options.respectIgnore ? await createIgnoreMatcherForDir(absPath) : null;
+  const ignoreMatcher = options.respectIgnore
+    ? await createIgnoreMatcherForDir(absPath, config.INCLUDE_PATHS)
+    : null;
 
   function recordEntry(entry: TreeEntry): void {
     total += 1;

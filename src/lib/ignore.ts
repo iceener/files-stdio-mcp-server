@@ -28,16 +28,34 @@ export interface IgnoreMatcher {
 }
 
 /**
- * Create an ignore matcher from patterns.
+ * Check if a relative path falls under any of the include prefixes.
+ * Matching is recursive — prefix "data" matches "data", "data/foo", "data/foo/bar".
  */
-export function createIgnoreMatcher(patterns: string[]): IgnoreMatcher {
+function isIncludedPath(relativePath: string, includePaths: readonly string[]): boolean {
+  if (includePaths.length === 0) return false;
+  const normalized = relativePath.replace(/^\/+/, '');
+  return includePaths.some(
+    (prefix) =>
+      normalized === prefix ||
+      normalized.startsWith(prefix + '/'),
+  );
+}
+
+/**
+ * Create an ignore matcher from patterns.
+ * Paths matching `includePaths` are never ignored (whitelist override).
+ */
+export function createIgnoreMatcher(
+  patterns: string[],
+  includePaths: readonly string[] = [],
+): IgnoreMatcher {
   const ig: Ignore = ignore().add(DEFAULT_IGNORE).add(patterns);
 
   return {
     isIgnored(relativePath: string): boolean {
-      // The ignore package requires paths without leading slashes
       const normalized = relativePath.replace(/^\/+/, '');
       if (!normalized) return false;
+      if (isIncludedPath(normalized, includePaths)) return false;
       return ig.ignores(normalized);
     },
   };
@@ -68,8 +86,12 @@ export async function loadIgnorePatterns(dir: string): Promise<string[]> {
 
 /**
  * Create an ignore matcher for a directory.
+ * Paths matching `includePaths` are never ignored (whitelist override).
  */
-export async function createIgnoreMatcherForDir(dir: string): Promise<IgnoreMatcher> {
+export async function createIgnoreMatcherForDir(
+  dir: string,
+  includePaths: readonly string[] = [],
+): Promise<IgnoreMatcher> {
   const patterns = await loadIgnorePatterns(dir);
-  return createIgnoreMatcher(patterns);
+  return createIgnoreMatcher(patterns, includePaths);
 }

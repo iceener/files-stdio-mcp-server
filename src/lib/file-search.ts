@@ -82,6 +82,8 @@ export interface FileSearchOptions {
   exclude?: string[];
   /** Maximum depth to traverse */
   maxDepth?: number;
+  /** Relative path prefixes to force-include even if ignored */
+  includePaths?: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -240,6 +242,7 @@ class FileIndexManager {
     const includeDirectories = options.includeDirectories ?? false;
     const respectIgnore = options.respectIgnore ?? true;
     const exclude = options.exclude ?? [];
+    const includePaths = options.includePaths ?? [];
 
     // Build ignore patterns for fast-glob
     const ignorePatterns = [...ALWAYS_EXCLUDE.map((d) => `**/${d}/**`)];
@@ -251,6 +254,12 @@ class FileIndexManager {
 
     if (exclude.length > 0) {
       ignorePatterns.push(...exclude);
+    }
+
+    // Whitelist: add negation patterns so included paths override ignores.
+    // Negations must come AFTER the patterns they override.
+    for (const included of includePaths) {
+      ignorePatterns.push(`!${included}`, `!${included}/**`);
     }
 
     // Use fast-glob for efficient directory traversal
