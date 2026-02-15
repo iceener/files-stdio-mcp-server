@@ -39,8 +39,9 @@ export const fsSearchInputSchema = z
       .string()
       .min(1)
       .describe(
-        'Search term for both filename matching (fuzzy) and content search. ' +
-          'Examples: "config", "TODO", "function.*export" (with patternMode="regex").',
+        'Search term. Use single keywords for best results with default literal mode ("music", "focus"). ' +
+          'Multi-word phrases like "Spotify focus" ONLY match that exact substring — not files containing ' +
+          'both words separately. For multiple terms, use patternMode="regex" with OR: "music|focus|playlist".',
       ),
 
     target: z
@@ -54,15 +55,17 @@ export const fsSearchInputSchema = z
       .optional()
       .default('literal')
       .describe(
-        'How to interpret query: "literal" (exact text), "regex" (regular expression), ' +
-          '"fuzzy" (flexible whitespace). Default "literal".',
+        'How to interpret query for content search. ' +
+          '"literal" (default): EXACT substring — "foo bar" only matches that exact phrase, not files containing both words separately. ' +
+          '"regex": full regex — use "word1|word2" for OR search, "word1.*word2" for proximity. ' +
+          '"fuzzy": flexible whitespace matching.',
       ),
 
     caseInsensitive: z
       .boolean()
       .optional()
-      .default(false)
-      .describe('Ignore case in content search. Default false.'),
+      .default(true)
+      .describe('Ignore case in content search. Default true.'),
 
     wholeWord: z
       .boolean()
