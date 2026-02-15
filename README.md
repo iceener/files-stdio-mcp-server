@@ -66,6 +66,10 @@ FS_ROOTS=/path/to/vault,/path/to/docs
 # Optional
 LOG_LEVEL=info
 MAX_FILE_SIZE=1048576
+
+# Force-include ignored folders (comma-separated relative paths)
+# These folders will be visible even if matched by .gitignore
+# FS_INCLUDE=data,build/output
 ```
 
 ### 3. Run
@@ -488,6 +492,17 @@ hint: "The diff above shows what changed."
 | `MCP_VERSION` | `1.0.0` | Server version |
 | `LOG_LEVEL` | `info` | Log level: debug, info, warning, error |
 | `MAX_FILE_SIZE` | `1048576` | Max file size in bytes (1MB) |
+| `FS_INCLUDE` | _(none)_ | Comma-separated relative paths to force-include even if gitignored (recursive) |
+
+### Force-Include Ignored Folders
+
+Some folders may be in `.gitignore` but still need to be searchable by the agent (e.g., generated data, build output). Use `FS_INCLUDE` to whitelist them:
+
+```env
+FS_INCLUDE=docs,workspaces,data/embeddings
+```
+
+Paths are relative to the mount root and recursive — `data` includes `data/`, `data/sub/`, `data/sub/deep/`, etc. This overrides `.gitignore`, `.ignore`, and all default ignore patterns.
 
 ### Multi-Mount Setup
 
