@@ -6,8 +6,8 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+import type { CallToolResult } from '@modelcontextprotocol/server';
+import * as z from 'zod/v4';
 import {
   deleteLines,
   generateChecksum,
@@ -97,7 +97,6 @@ export const fsWriteInputSchema = z
       .optional()
       .default(true)
       .describe('For create: whether to create parent directories if missing. Default true.'),
-
   })
   .passthrough() // Allow extra keys from SDK context
   .refine(
@@ -507,7 +506,7 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
         content: [
           {
             type: 'text',
-            text: `Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+            text: `Invalid input: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
           },
         ],
       };
@@ -582,7 +581,8 @@ DO NOT call fs_write without first calling fs_read on the same file.`,
           error: {
             code: 'INVALID_OPERATION',
             message: `Unknown operation: ${input.operation}`,
-            recoveryHint: 'Use operation="create" for new files or operation="update" for existing files.',
+            recoveryHint:
+              'Use operation="create" for new files or operation="update" for existing files.',
           },
           hint: 'Invalid operation. Use "create" for new files, "update" for existing files.',
         };

@@ -4,6 +4,10 @@ Stdio MCP server for sandboxed file access — read files, search content, safel
 
 Author: [overment](https://x.com/_overment)
 
+> **Release status (2026-07-27):** this repository intentionally pins `@modelcontextprotocol/server` and the test-only `@modelcontextprotocol/client` to `2.0.0-beta.5`. These packages implement the `2026-07-28` release candidate, not a final published protocol. Re-run the final release gate before claiming final conformance.
+
+The server uses the public `serveStdio` entry with legacy mode set to `serve`. The SDK chooses the protocol era from the opening exchange and pins one server instance to that stdio connection. Standard output is reserved for MCP frames; diagnostics are written only to standard error.
+
 > [!WARNING]
 > This server provides filesystem access to an AI agent. While it's sandboxed to specific directories, always:
 > - Review tool outputs before confirming changes
@@ -560,8 +564,11 @@ bun dev           # Start with hot reload
 bun test          # Run tests
 bun run typecheck # TypeScript check
 bun run lint      # Lint code
-bun run build     # Production build
-bun run inspector # Test with MCP Inspector
+bun run test:protocol       # Official-client source protocol matrix
+bun run build               # Production build
+bun run test:protocol:built # Repeat handshake against the Node artifact
+bun run format:check        # Check formatting
+bun run inspector           # Test with MCP Inspector
 ```
 
 ---

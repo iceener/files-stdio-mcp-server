@@ -6,8 +6,8 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+import type { CallToolResult } from '@modelcontextprotocol/server';
+import * as z from 'zod/v4';
 import { config } from '../config/env.js';
 import {
   createIgnoreMatcherForDir,
@@ -307,7 +307,11 @@ async function searchContentInDirectory(
   };
 
   // Process in concurrent batches
-  for (let i = 0; i < filesToSearch.length && allMatches.length < options.maxResults; i += SEARCH_CONCURRENCY) {
+  for (
+    let i = 0;
+    i < filesToSearch.length && allMatches.length < options.maxResults;
+    i += SEARCH_CONCURRENCY
+  ) {
     const batch = filesToSearch.slice(i, i + SEARCH_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(processFile));
 
@@ -361,7 +365,7 @@ WORKFLOW:
         content: [
           {
             type: 'text',
-            text: `Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+            text: `Invalid input: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
           },
         ],
       };
@@ -543,10 +547,13 @@ function buildHint(
   if (target === 'filename') {
     parts.push(fileCount > 0 ? `Found ${fileCount} file(s).` : 'No files found.');
   } else if (target === 'content') {
-    parts.push(contentCount > 0 ? `Found ${contentCount} content match(es).` : 'No content matches found.');
+    parts.push(
+      contentCount > 0 ? `Found ${contentCount} content match(es).` : 'No content matches found.',
+    );
   } else {
     const filePart = fileCount > 0 ? `${fileCount} file(s)` : 'no files';
-    const contentPart = contentCount > 0 ? `${contentCount} content match(es)` : 'no content matches';
+    const contentPart =
+      contentCount > 0 ? `${contentCount} content match(es)` : 'no content matches';
     parts.push(`Found ${filePart} and ${contentPart}.`);
   }
 

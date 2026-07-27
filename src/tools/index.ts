@@ -1,80 +1,77 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
+import {
+  fsManageOutputSchema,
+  fsReadOutputSchema,
+  fsSearchOutputSchema,
+  fsWriteOutputSchema,
+} from '../schemas/outputs.js';
 import { fsManageTool } from './fs-manage.tool.js';
 import { fsReadTool } from './fs-read.tool.js';
 import { fsSearchTool } from './fs-search.tool.js';
 import { fsWriteTool } from './fs-write.tool.js';
 
-/**
- * Get the underlying object schema from a ZodEffects (after .refine() or .transform())
- * Walks down the _def chain to find the ZodObject.
- */
-function getBaseSchema(schema: unknown): unknown {
-  let current = schema;
-  // Walk down the chain of ZodEffects to find the base ZodObject
-  while (current && typeof current === 'object' && '_def' in current) {
-    const def = (current as { _def: { schema?: unknown } })._def;
-    if ('schema' in def && def.schema) {
-      current = def.schema;
-    } else {
-      break;
-    }
+/** Add v2 structured output without changing the preserved filesystem handlers. */
+function addStructuredContent(result: CallToolResult): CallToolResult {
+  if (result.isError || result.structuredContent !== undefined) return result;
+
+  const text = result.content.find(
+    (item): item is Extract<(typeof result.content)[number], { type: 'text' }> =>
+      item.type === 'text',
+  )?.text;
+  if (text === undefined) return result;
+
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return result;
+    return { ...result, structuredContent: parsed as Record<string, unknown> };
+  } catch {
+    return result;
   }
-  return current;
 }
 
-/**
- * Register all tools with the MCP server.
- */
+/** Register filesystem tools in their established discovery order. */
 export function registerTools(server: McpServer): void {
-  // fs_read - explore and read
-  // Note: We use getBaseSchema() to get the base schema before refine() transforms
-  const readBaseSchema = getBaseSchema(fsReadTool.inputSchema) as { shape: unknown };
   server.registerTool(
     fsReadTool.name,
     {
       description: fsReadTool.description,
-      inputSchema: readBaseSchema.shape,
+      inputSchema: fsReadTool.inputSchema,
+      outputSchema: fsReadOutputSchema,
     },
-    fsReadTool.handler,
+    async (args, context) => addStructuredContent(await fsReadTool.handler(args, context)),
   );
 
-  // fs_search - find files and search content
-  const searchBaseSchema = getBaseSchema(fsSearchTool.inputSchema) as { shape: unknown };
   server.registerTool(
     fsSearchTool.name,
     {
       description: fsSearchTool.description,
-      inputSchema: searchBaseSchema.shape,
+      inputSchema: fsSearchTool.inputSchema,
+      outputSchema: fsSearchOutputSchema,
     },
-    fsSearchTool.handler,
+    async (args, context) => addStructuredContent(await fsSearchTool.handler(args, context)),
   );
 
-  // fs_write - create, update
-  const writeBaseSchema = getBaseSchema(fsWriteTool.inputSchema) as { shape: unknown };
   server.registerTool(
     fsWriteTool.name,
     {
       description: fsWriteTool.description,
-      inputSchema: writeBaseSchema.shape,
+      inputSchema: fsWriteTool.inputSchema,
+      outputSchema: fsWriteOutputSchema,
     },
-    fsWriteTool.handler,
+    async (args, context) => addStructuredContent(await fsWriteTool.handler(args, context)),
   );
 
-  // fs_manage - structural operations
-  const manageBaseSchema = getBaseSchema(fsManageTool.inputSchema) as { shape: unknown };
   server.registerTool(
     fsManageTool.name,
     {
       description: fsManageTool.description,
-      inputSchema: manageBaseSchema.shape,
+      inputSchema: fsManageTool.inputSchema,
+      outputSchema: fsManageOutputSchema,
     },
-    fsManageTool.handler,
+    async (args, context) => addStructuredContent(await fsManageTool.handler(args, context)),
   );
 }
 
-/**
- * Export tools for testing
- */
 export const tools = {
   fsRead: fsReadTool,
   fsSearch: fsSearchTool,

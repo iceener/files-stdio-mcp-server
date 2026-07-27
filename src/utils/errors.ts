@@ -1,15 +1,11 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { logger } from './logger.js';
 
-// Re-export SDK error types for protocol-level errors
-export { ErrorCode as McpErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+export {
+  ProtocolError as McpError,
+  ProtocolErrorCode as McpErrorCode,
+} from '@modelcontextprotocol/server';
 
-/**
- * Application-level error codes for tool failures.
- *
- * Use these for tool-level errors that should be returned as CallToolResult.
- * For protocol-level errors (like method not found), use McpError with McpErrorCode.
- */
 export const ToolErrorCodes = {
   VALIDATION: 'VALIDATION_ERROR',
   NOT_FOUND: 'NOT_FOUND',
@@ -24,11 +20,6 @@ export const ToolErrorCodes = {
 
 export type ToolErrorCode = (typeof ToolErrorCodes)[keyof typeof ToolErrorCodes];
 
-/**
- * Tool error with structured information.
- *
- * Throw this in tool handlers for structured error handling.
- */
 export class ToolError extends Error {
   constructor(
     message: string,
@@ -40,56 +31,33 @@ export class ToolError extends Error {
   }
 }
 
-/**
- * Create a standard error result for tool calls.
- *
- * @example
- * return toolError('User not found', 'NOT_FOUND', { userId: 123 });
- */
 export function toolError(
   message: string,
   code: ToolErrorCode = ToolErrorCodes.INTERNAL,
   details?: Record<string, unknown>,
 ): CallToolResult {
   logger.error('tool', { message, code, ...details });
-
   const errorInfo = details ? `\n\nDetails: ${JSON.stringify(details, null, 2)}` : '';
-
   return {
     isError: true,
-    content: [
-      {
-        type: 'text',
-        text: `Error [${code}]: ${message}${errorInfo}`,
-      },
-    ],
+    content: [{ type: 'text', text: `Error [${code}]: ${message}${errorInfo}` }],
   };
 }
 
-/**
- * Create a validation error result from Zod issues.
- *
- * @example
- * const parsed = schema.safeParse(input);
- * if (!parsed.success) {
- *   return validationError(parsed.error.issues);
- * }
- */
 export function validationError(
-  issues: Array<{ path: Array<string | number>; message: string }>,
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
 ): CallToolResult {
   const formatted = issues
-    .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
+    .map((issue) => `  - ${issue.path.map(String).join('.')}: ${issue.message}`)
     .join('\n');
-
   return toolError(`Invalid input:\n${formatted}`, ToolErrorCodes.VALIDATION, {
-    issues: issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    issues: issues.map((issue) => ({
+      path: issue.path.map(String).join('.'),
+      message: issue.message,
+    })),
   });
 }
 
-/**
- * Create a cancellation error result.
- */
 export function cancelledError(message = 'Operation cancelled'): CallToolResult {
   return {
     isError: true,
@@ -97,16 +65,6 @@ export function cancelledError(message = 'Operation cancelled'): CallToolResult 
   };
 }
 
-/**
- * Wrap an async function with error handling for tools.
- * Catches exceptions and converts them to proper error results.
- *
- * @example
- * handler: wrapHandler(async (args) => {
- *   // your logic here
- *   return { content: [...] };
- * })
- */
 export function wrapHandler<T>(
   fn: (args: T) => Promise<CallToolResult>,
 ): (args: T) => Promise<CallToolResult> {
@@ -117,26 +75,19 @@ export function wrapHandler<T>(
       if (error instanceof ToolError) {
         return toolError(error.message, error.code, error.details);
       }
-
-      const message = error instanceof Error ? error.message : String(error);
-      return toolError(message, ToolErrorCodes.INTERNAL);
+      return toolError(
+        error instanceof Error ? error.message : String(error),
+        ToolErrorCodes.INTERNAL,
+      );
     }
   };
 }
 
-/**
- * Assert a condition, throwing ToolError if false.
- *
- * @example
- * assertTool(user !== null, 'User not found', 'NOT_FOUND');
- */
 export function assertTool(
   condition: unknown,
   message: string,
   code: ToolErrorCode = ToolErrorCodes.INTERNAL,
   details?: Record<string, unknown>,
 ): asserts condition {
-  if (!condition) {
-    throw new ToolError(message, code, details);
-  }
+  if (!condition) throw new ToolError(message, code, details);
 }

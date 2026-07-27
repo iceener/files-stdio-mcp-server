@@ -24,7 +24,7 @@ describe('fs_search: filename search', () => {
     });
 
     expect(result.success).toBe(true);
-    const entries = result.results.byFilename as { path: string }[];
+    const entries = result.files as { path: string }[];
     expect(entries.some((e) => e.path.endsWith('todo.md'))).toBe(true);
   });
 
@@ -38,7 +38,7 @@ describe('fs_search: filename search', () => {
     });
 
     expect(result.success).toBe(true);
-    const entries = result.results.byFilename as { path: string }[];
+    const entries = result.files as { path: string }[];
     expect(entries.every((e) => e.path.endsWith('.md'))).toBe(true);
   });
 
@@ -51,7 +51,7 @@ describe('fs_search: filename search', () => {
     });
 
     expect(result.success).toBe(true);
-    const entries = result.results.byFilename as unknown[];
+    const entries = result.files as unknown[];
     expect(entries.length).toBe(0);
   });
 });
@@ -66,7 +66,7 @@ describe('fs_search: content search', () => {
     });
 
     expect(result.success).toBe(true);
-    expect((result.results.byContent as unknown[]).length).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 
   test('searches with regex query', async () => {
@@ -81,19 +81,19 @@ describe('fs_search: content search', () => {
     expect(result.success).toBe(true);
   });
 
-  test('returns context lines around matches', async () => {
+  test('returns line metadata for matches', async () => {
     const result = await runFsSearch({
       path: 'vault',
       query: 'keyword',
       target: 'content',
-      context: 3,
       depth: 10,
     });
 
     expect(result.success).toBe(true);
-    const contentResults = result.results.byContent as { matches: { context: { before: string[]; after: string[] } }[] }[];
+    const contentResults = result.content as { line: number; text: string }[];
     if (contentResults.length > 0) {
-      expect(contentResults[0]?.matches[0]?.context).toBeDefined();
+      expect(contentResults[0]?.line).toBeGreaterThan(0);
+      expect(contentResults[0]?.text).toBeDefined();
     }
   });
 });

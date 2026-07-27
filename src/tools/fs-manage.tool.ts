@@ -5,8 +5,8 @@
  */
 
 import fs from 'node:fs/promises';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+import type { CallToolResult } from '@modelcontextprotocol/server';
+import * as z from 'zod/v4';
 import { getMounts, resolvePath as resolveVirtualPath, validatePathChain } from '../lib/index.js';
 import type { HandlerExtra } from '../types/index.js';
 
@@ -173,7 +173,7 @@ DELETE IS PERMANENT — only single files or empty directories can be deleted (n
         content: [
           {
             type: 'text',
-            text: `Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+            text: `Invalid input: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
           },
         ],
       };
@@ -378,7 +378,7 @@ DELETE IS PERMANENT — only single files or empty directories can be deleted (n
         case 'rename':
         case 'move':
         case 'copy': {
-          if (!targetResolved || !targetResolved.ok) {
+          if (!targetResolved?.ok) {
             const result: FsManageResult = {
               success: false,
               operation: input.operation,

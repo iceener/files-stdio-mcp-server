@@ -123,7 +123,7 @@ describe('fs_manage: rename, move, copy, delete', () => {
     expect(exists).toBe(false);
   });
 
-  test('deletes a directory recursively', async () => {
+  test('refuses to delete a non-empty directory recursively', async () => {
     await fs.mkdir(path.join(TEST_DIR, 'dir'), { recursive: true });
     await fs.writeFile(path.join(TEST_DIR, 'dir/file.txt'), 'content');
 
@@ -133,8 +133,9 @@ describe('fs_manage: rename, move, copy, delete', () => {
       recursive: true,
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect((result.error as { code: string }).code).toBe('DIRECTORY_NOT_EMPTY');
     const exists = await fs.access(path.join(TEST_DIR, 'dir')).then(() => true).catch(() => false);
-    expect(exists).toBe(false);
+    expect(exists).toBe(true);
   });
 });

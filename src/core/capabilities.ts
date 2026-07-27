@@ -1,26 +1,14 @@
-import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
+import type { ProtocolEra, ServerCapabilities } from '@modelcontextprotocol/server';
 
-/**
- * Build server capabilities declaration.
- *
- * Capabilities tell the client what features this server supports:
- * - tools: Server can register and execute tools
- * - prompts: Server can provide prompt templates
- * - resources: Server can expose readable resources
- * - logging: Server can send log messages to client
- */
-export function buildCapabilities(): ServerCapabilities {
+/** Build capabilities appropriate for the connection's negotiated protocol era. */
+export function buildCapabilities(era: ProtocolEra): ServerCapabilities {
+  const changeStreams = era === 'modern';
   return {
-    tools: {
-      listChanged: true,
-    },
-    prompts: {
-      listChanged: true,
-    },
+    tools: { listChanged: changeStreams },
+    prompts: { listChanged: changeStreams },
     resources: {
-      listChanged: true,
-      subscribe: true,
+      listChanged: changeStreams,
+      subscribe: changeStreams,
     },
-    logging: {},
   };
 }

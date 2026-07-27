@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 /**
  * Common reusable schemas for input validation.
@@ -29,7 +29,7 @@ export function strictObject<T extends z.ZodRawShape>(shape: T) {
 export function strictParse<T extends z.ZodType>(
   schema: T,
   data: unknown,
-): z.SafeParseReturnType<z.input<T>, z.output<T>> {
+): z.ZodSafeParseResult<z.output<T>> {
   return schema.safeParse(data);
 }
 

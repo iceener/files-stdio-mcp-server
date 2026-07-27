@@ -35,9 +35,7 @@ function isIncludedPath(relativePath: string, includePaths: readonly string[]): 
   if (includePaths.length === 0) return false;
   const normalized = relativePath.replace(/^\/+/, '');
   return includePaths.some(
-    (prefix) =>
-      normalized === prefix ||
-      normalized.startsWith(prefix + '/'),
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
   );
 }
 

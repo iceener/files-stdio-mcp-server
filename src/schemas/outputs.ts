@@ -1,162 +1,118 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
-/**
- * Output schemas for filesystem tools.
- *
- * These define the structure of tool responses for validation and documentation.
- */
-
-// ─────────────────────────────────────────────────────────────
-// Common Types
-// ─────────────────────────────────────────────────────────────
-
-/** Tree entry for directory listings */
 export const treeEntrySchema = z.object({
-  path: z.string().describe('Relative path from mount root'),
-  kind: z.enum(['file', 'directory']).describe('Entry type'),
-  children: z.number().optional().describe('Number of children (directories only)'),
-  size: z.string().optional().describe('Human-readable size (files only, when details=true)'),
-  modified: z.string().optional().describe('Last modified date (when details=true)'),
+  path: z.string(),
+  kind: z.enum(['file', 'directory']),
+  size: z.string().optional(),
+  modified: z.string().optional(),
+  children: z.number().int().nonnegative().optional(),
+  files: z.number().int().nonnegative().optional(),
+  depthLimitReached: z.boolean().optional(),
 });
 
-/** Error info in responses */
 export const errorInfoSchema = z.object({
-  code: z.string().describe('Error code for programmatic handling'),
-  message: z.string().describe('Human-readable error message'),
-  recoveryHint: z.string().optional().describe('Suggestion for fixing the error'),
+  code: z.string(),
+  message: z.string(),
+  recoveryHint: z.string().optional(),
 });
 
-// ─────────────────────────────────────────────────────────────
-// fs_read Output
-// ─────────────────────────────────────────────────────────────
+const directoryStatsSchema = z.object({
+  returned: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  hasMore: z.boolean(),
+  truncated: z.boolean(),
+});
 
 export const fsReadOutputSchema = z.object({
-  success: z.boolean().describe('Whether the operation succeeded'),
-  path: z.string().describe('Path that was read'),
-  type: z.enum(['file', 'directory']).describe('Type of result'),
-
-  // Directory listing
-  entries: z
-    .array(treeEntrySchema)
-    .optional()
-    .describe('Directory entries (when path is a directory)'),
-  summary: z.string().optional().describe('Human-readable summary'),
-
-  // File content
+  success: z.boolean(),
+  path: z.string(),
+  type: z.enum(['file', 'directory']),
+  entries: z.array(treeEntrySchema).optional(),
+  summary: z.string().optional(),
+  stats: directoryStatsSchema.optional(),
   content: z
     .object({
-      text: z.string().describe('File content with line numbers'),
-      checksum: z.string().describe('Checksum for safe editing'),
-      totalLines: z.number().describe('Total lines in file'),
+      text: z.string(),
+      checksum: z.string(),
+      totalLines: z.number().int().nonnegative(),
       range: z
         .object({
-          start: z.number().describe('Start line (1-indexed)'),
-          end: z.number().describe('End line (1-indexed)'),
+          start: z.number().int().positive(),
+          end: z.number().int().nonnegative(),
         })
         .optional(),
-      truncated: z.boolean().describe('Whether content was truncated'),
+      truncated: z.boolean(),
     })
-    .optional()
-    .describe('File content (when path is a file)'),
-
-  error: errorInfoSchema.optional().describe('Error details if success=false'),
-  hint: z.string().describe('Suggested next action'),
+    .optional(),
+  error: errorInfoSchema.optional(),
+  hint: z.string(),
 });
 
-// ─────────────────────────────────────────────────────────────
-// fs_search Output
-// ─────────────────────────────────────────────────────────────
-
-export const filenameMatchSchema = z.object({
-  path: z.string().describe('Matched file path'),
-  score: z.number().describe('Fuzzy match score (higher is better)'),
-  matchIndices: z.array(z.number()).describe('Indices of matched characters'),
+const fileMatchSchema = z.object({
+  name: z.string(),
+  path: z.string(),
 });
 
-export const contentMatchSchema = z.object({
-  line: z.number().describe('Start line number'),
-  endLine: z.number().describe('End line number'),
-  matchCount: z.number().describe('Number of matches in this cluster'),
-  text: z.string().describe('Matched text summary'),
-  context: z.object({
-    before: z.array(z.string()).describe('Lines before the match'),
-    match: z.array(z.string()).describe('Matched lines'),
-    after: z.array(z.string()).describe('Lines after the match'),
-  }),
-});
-
-export const contentFileSchema = z.object({
-  path: z.string().describe('File path where matches were found'),
-  matches: z.array(contentMatchSchema).describe('Matches within the file'),
+const contentMatchSchema = z.object({
+  path: z.string(),
+  line: z.number().int().positive(),
+  text: z.string(),
 });
 
 export const fsSearchOutputSchema = z.object({
-  success: z.boolean().describe('Whether the operation succeeded'),
-  query: z.string().describe('Search query'),
-  target: z.enum(['all', 'filename', 'content']).describe('Search target'),
-  results: z.object({
-    byFilename: z.array(filenameMatchSchema).describe('Filename matches'),
-    byContent: z.array(contentFileSchema).describe('Content matches by file'),
-  }),
-  stats: z.object({
-    filenameMatches: z.number().describe('Number of filename matches'),
-    contentMatches: z.number().describe('Number of content matches'),
-    filesSearched: z.number().describe('Number of files searched for content'),
-  }),
-  truncated: z.boolean().describe('Whether results were truncated'),
-  error: errorInfoSchema.optional().describe('Error details if success=false'),
-  hint: z.string().describe('Suggested next action'),
+  success: z.boolean(),
+  query: z.string(),
+  files: z.array(fileMatchSchema),
+  content: z.array(contentMatchSchema).optional(),
+  totalCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  error: errorInfoSchema.optional(),
+  hint: z.string(),
 });
 
-// ─────────────────────────────────────────────────────────────
-// fs_write Output
-// ─────────────────────────────────────────────────────────────
+const createResultSchema = z.object({
+  action: z.enum(['created', 'would_create']),
+  newChecksum: z.string().optional(),
+  diff: z.string(),
+});
+
+const updateResultSchema = z.object({
+  action: z.string(),
+  targetRange: z.object({
+    start: z.number().int().positive(),
+    end: z.number().int().positive(),
+  }),
+  newChecksum: z.string().optional(),
+  diff: z.string(),
+});
 
 export const fsWriteOutputSchema = z.object({
-  success: z.boolean().describe('Whether the operation succeeded'),
-  path: z.string().describe('Path that was written'),
-  operation: z.enum(['create', 'update']).describe('Operation performed'),
-  applied: z.boolean().describe('Whether changes were applied (false for dryRun)'),
-
-  result: z
-    .object({
-      action: z.string().describe('Specific action taken'),
-      linesAffected: z.number().optional().describe('Lines changed'),
-      newChecksum: z.string().optional().describe('Checksum after modification'),
-      diff: z.string().optional().describe('Unified diff of changes'),
-    })
-    .optional()
-    .describe('Result details for successful operations'),
-
-  error: errorInfoSchema.optional().describe('Error details if success=false'),
-  hint: z.string().describe('Suggested next action'),
+  status: z.enum(['applied', 'preview', 'error']),
+  path: z.string(),
+  operation: z.enum(['create', 'update']),
+  result: z.union([createResultSchema, updateResultSchema]).optional(),
+  error: errorInfoSchema.optional(),
+  hint: z.string(),
 });
-
-// ─────────────────────────────────────────────────────────────
-// fs_manage Output
-// ─────────────────────────────────────────────────────────────
 
 export const fsManageOutputSchema = z.object({
-  success: z.boolean().describe('Whether the operation succeeded'),
-  operation: z.string().describe('Operation performed'),
-  path: z.string().describe('Source path'),
-  target: z.string().optional().describe('Target path (if applicable)'),
+  success: z.boolean(),
+  operation: z.string(),
+  path: z.string(),
+  target: z.string().optional(),
   stat: z
     .object({
-      size: z.number().describe('Size in bytes'),
-      modified: z.string().describe('Last modified timestamp'),
-      created: z.string().describe('Created timestamp'),
-      isDirectory: z.boolean().describe('Whether path is a directory'),
+      size: z.number().nonnegative(),
+      modified: z.string(),
+      created: z.string(),
+      isDirectory: z.boolean(),
     })
-    .optional()
-    .describe('Stat result (for stat operation)'),
-  error: errorInfoSchema.optional().describe('Error details if success=false'),
-  hint: z.string().describe('Suggested next action'),
+    .optional(),
+  error: errorInfoSchema.optional(),
+  hint: z.string(),
 });
-
-// ─────────────────────────────────────────────────────────────
-// Type Exports
-// ─────────────────────────────────────────────────────────────
 
 export type TreeEntry = z.infer<typeof treeEntrySchema>;
 export type ErrorInfo = z.infer<typeof errorInfoSchema>;

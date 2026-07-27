@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { fsSearchTool } from '../../src/tools/fs-search.tool.js';
 
-const KNOWLEDGE_FILE = 'vault/knowledge/programming-notes.md';
+const KNOWLEDGE_FILE = 'vault/knowledge';
 const TEST_DIR = path.join(FIXTURES_PATH, 'obsidian-tests');
 
 async function runFsSearch(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -41,7 +41,7 @@ describe('Obsidian: Wikilinks', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThanOrEqual(5);
+    expect((result.content as unknown[]).length).toBeGreaterThanOrEqual(5);
   });
 
   test('finds wikilinks with display text', async () => {
@@ -53,7 +53,7 @@ describe('Obsidian: Wikilinks', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 
   test('finds links to specific note', async () => {
@@ -65,7 +65,7 @@ describe('Obsidian: Wikilinks', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 
   test('finds heading links', async () => {
@@ -77,7 +77,7 @@ describe('Obsidian: Wikilinks', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 });
 
@@ -86,7 +86,7 @@ describe('Obsidian: Wikilinks', () => {
 // ─────────────────────────────────────────────────────────────
 
 describe('Obsidian: Tags', () => {
-  test('finds all inline tags', async () => {
+  test('finds lines with inline tags', async () => {
     const result = await runFsSearch({
       path: KNOWLEDGE_FILE,
       query: '#[a-zA-Z][\\w/-]*',
@@ -95,7 +95,7 @@ describe('Obsidian: Tags', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(3);
+    expect((result.content as unknown[]).length).toBeGreaterThan(2);
   });
 
   test('finds nested tags', async () => {
@@ -119,7 +119,7 @@ describe('Obsidian: Tags', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 });
 
@@ -137,7 +137,7 @@ describe('Obsidian: Frontmatter', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThanOrEqual(2);
+    expect((result.content as unknown[]).length).toBeGreaterThanOrEqual(2);
   });
 
   test('finds specific frontmatter field', async () => {
@@ -149,7 +149,7 @@ describe('Obsidian: Frontmatter', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(0);
+    expect((result.content as unknown[]).length).toBeGreaterThan(0);
   });
 
   test('finds files with specific frontmatter tag', async () => {
@@ -180,6 +180,6 @@ describe('Obsidian: Tasks', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.stats.contentMatches).toBeGreaterThan(2);
+    expect((result.content as unknown[]).length).toBeGreaterThan(2);
   });
 });

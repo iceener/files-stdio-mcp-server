@@ -34,7 +34,12 @@ async function runFsWrite(args: Record<string, unknown>): Promise<Record<string,
     };
   }
   const text = (result.content[0] as { text: string }).text;
-  return JSON.parse(text);
+  const parsed = JSON.parse(text) as Record<string, unknown>;
+  return {
+    ...parsed,
+    success: parsed.status !== 'error',
+    applied: parsed.status === 'applied',
+  };
 }
 
 // Setup and teardown
